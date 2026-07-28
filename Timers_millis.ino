@@ -1,3 +1,4 @@
+// Every loop: clear then set soft-timer flags (50 µs … 500 ms).
 inline void millisTimer() {
 
   timer50microsFlag = 0;

@@ -102,6 +102,7 @@ float RANDOMNESS2 = 0;
 uint32_t tiempodeejecucion;
 
 void setup() {
+  // Boot: timers, LFOs, ADSR, tables, wave mux, MCP4728, UARTs, initial formulas.
 
   init_aux();
 
@@ -164,10 +165,7 @@ void setup() {
 }
 
 void loop() {
-  //if (h < 254) { h++;} else { h = 0;}
-  //   if  (timer200msFlag) {
-  //  drawTM(potMedian[7]);
-  //    }
+  // Hot path: soft timers, Serial2, LFO/ADSR, PWM (or manual cal), periodic sendSerial.
 
   unsigned long loopStartTime = micros();
 

@@ -1,3 +1,4 @@
+// Hot path (play): compute VCA/VCF CVs and write resonance/cutoff/VCA timer compares.
 inline void setPWMOuts() {
 #include "include_all.h"
   // /* ***************************           VCA PWM          *****************************/
@@ -104,6 +105,7 @@ inline void setPWMOuts() {
   }
 }
 
+// Hot path (manual cal): force wave/SQR/VCA for manualCalibrationStage; update mux + DACs.
 void setPWMOutsManualCalibration() {
 
   for (int i = 0; i < 4; i++) {
@@ -170,12 +172,14 @@ void setPWMOutsManualCalibration() {
   mcpUpdate();
 }
 
+// Push SQR1/SQR2/Sub levels to the three MCP4728 chips (param changes / manual cal).
 inline void mcpUpdate() {
   mcp.analogWrite(SQR1Level, SQR2Level, SQR1Level, SQR2Level);  // V1 OSC1, V2 OSC2, V2 OSC1, V3 OSC2
   mcp2.analogWrite(SQR1Level, SQR2Level, SQR1Level, SubLevel);  // V3 OSC1, V4 OSC2, V4 OSC1, SUB3
   mcp3.analogWrite(SubLevel, SubLevel, SubLevel, SQR2Level);    // SUB4, SUB1, SUB2, V1 OSC2
 }
 
+// Integer linear interpolation helper used by VCA table mapping in setPWMOuts.
 inline uint16_t linearInterpolation(uint16_t value, uint16_t x0, uint16_t x1, uint16_t y0, uint16_t y1) {
   // Ensure x1 is not equal to x0 to avoid division by zero
   if (x1 == x0) {

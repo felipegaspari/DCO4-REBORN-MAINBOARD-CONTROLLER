@@ -1,3 +1,4 @@
+// Boot: init Bézier tables and default A/D/S/R + restart for all voices' ADSR1/2/3.
 void init_ADSR() {
 
   // Initialize ADSR Bézier lookup tables via library helper
@@ -25,6 +26,7 @@ void init_ADSR() {
   }
 }
 
+// Hot path: apply noteStart/noteEnd edges, sample ADSR1/2/3 levels, refresh sustain params.
 inline void ADSR_update() {
   for (int i = 0; i < NUM_VOICES; i++) {
     if (noteEnd[i] == 1) {
@@ -57,6 +59,7 @@ inline void ADSR_update() {
   ADSR_set_parameters();
 }
 
+// Throttle (~5 ms): push current sustain values to all voice ADSRs.
 inline void ADSR_set_parameters() {
       tADSR = millis();
   if ((tADSR - tADSR_params) > 5) {
@@ -69,18 +72,21 @@ inline void ADSR_set_parameters() {
   }
 }
 
+// Apply VCAADSRRestart to all ADSR1 instances (param table).
 void ADSR1_set_restart() {
   for (int i = 0; i < NUM_VOICES; i++) {
     ADSRVoices[i].adsr1_voice.setResetAttack(VCAADSRRestart);
   }
 }
 
+// Apply VCFADSRRestart to all ADSR2 instances (param table).
 void ADSR2_set_restart() {
   for (int i = 0; i < NUM_VOICES; i++) {
     ADSRVoices[i].adsr2_voice.setResetAttack(VCFADSRRestart);
   }
 }
 
+// Set ADSR1 attack curve and re-apply timing params (param table).
 void ADSR1_change_attack_curve(uint8_t adsrCurveAttack) {
   for (int i = 0; i < NUM_VOICES; i++) {
     ADSRVoices[i].adsr1_voice.adsrCurveAttack(adsrCurveAttack);
@@ -92,6 +98,7 @@ void ADSR1_change_attack_curve(uint8_t adsrCurveAttack) {
   }
 }
 
+// Set ADSR1 decay curve and re-apply timing params (param table).
 void ADSR1_change_decay_curve(uint8_t adsrCurveDecay) {
   for (int i = 0; i < NUM_VOICES; i++) {
     //ADSRVoices[i].adsr1_voice.changeCurves(ADSR_1_DACSIZE, ADSR1_curve1, ADSR1_curve2);
@@ -104,6 +111,7 @@ void ADSR1_change_decay_curve(uint8_t adsrCurveDecay) {
   }
 }
 
+// Set ADSR1 release curve. Currently unused (no live callers).
 void ADSR1_change_release_curve(uint8_t adsrCurveRelease) {
   for (int i = 0; i < NUM_VOICES; i++) {
     //ADSRVoices[i].adsr1_voice.changeCurves(ADSR_1_DACSIZE, ADSR1_curve1, ADSR1_curve2);
@@ -116,6 +124,7 @@ void ADSR1_change_release_curve(uint8_t adsrCurveRelease) {
   }
 }
 
+// Set ADSR2 attack curve and re-apply timing params (param table).
 void ADSR2_change_attack_curve(uint8_t adsrCurveAttack) {
   for (int i = 0; i < NUM_VOICES; i++) {
     ADSRVoices[i].adsr2_voice.adsrCurveAttack(adsrCurveAttack);
@@ -127,6 +136,7 @@ void ADSR2_change_attack_curve(uint8_t adsrCurveAttack) {
   }
 }
 
+// Set ADSR2 decay curve and re-apply timing params (param table).
 void ADSR2_change_decay_curve(uint8_t adsrCurveDecay) {
   for (int i = 0; i < NUM_VOICES; i++) {
     ADSRVoices[i].adsr2_voice.adsrCurveDecay(adsrCurveDecay);
@@ -138,6 +148,7 @@ void ADSR2_change_decay_curve(uint8_t adsrCurveDecay) {
   }
 }
 
+// Set ADSR2 release curve. Currently unused (no live callers).
 void ADSR2_change_release_curve(uint8_t adsrCurveRelease) {
   for (int i = 0; i < NUM_VOICES; i++) {
     ADSRVoices[i].adsr2_voice.adsrCurveRelease(adsrCurveRelease);

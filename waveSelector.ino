@@ -1,3 +1,4 @@
+// Boot: GPIO + RoxMux begin for dual 74HC595 wave enables.
 void init_waveSelector() {
   pinMode(PIN_LATCH, OUTPUT);
   pinMode(PIN_DATA, OUTPUT);
@@ -7,6 +8,7 @@ void init_waveSelector() {
   waveSelectorMux.allOff();
 }
 
+// Update one wave family (0–3) or all (4) on the 595 mux from status flags.
 void update_waveSelector(byte wave) {
   //if (saw2Status == 0) {
   //     Serial.println("entro al all on");

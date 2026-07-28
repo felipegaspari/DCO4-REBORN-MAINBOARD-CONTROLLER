@@ -21,6 +21,7 @@ Serial.println(myRA.getAverage());
 #endif
 
 
+// Float map. Currently unused (no live callers).
 float mapFloat(float x, float in_min, float in_max, float out_min,
                float out_max) {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
@@ -30,7 +31,7 @@ struct Point {
   float x, y;
 };
 
-// Función que calcula un punto en la curva de Bézier cúbica para un valor dado de t
+// Evaluate a cubic Bézier at parameter t (used by VCA linearize table build).
 Point bezierCubic(const Point& A, const Point& P1, const Point& P2, const Point& B, float t) {
   float one_minus_t = 1.0f - t;
   float one_minus_t_squared = one_minus_t * one_minus_t;
@@ -60,6 +61,7 @@ float findYForX(const Point& A, const Point& P1, const Point& P2, const Point& B
   return resultPoint.y;
 }
 
+// Fill AS2164_VCA_linearize_table from Bézier control points (called from setup).
 void generateBezierArray(Point A, Point B, Point P1, Point P2, uint16_t arraySize, uint16_t (&array)[4096]) {
 
   for (int x = 0; x < arraySize; ++x) {
@@ -69,6 +71,7 @@ void generateBezierArray(Point A, Point B, Point P1, Point P2, uint16_t arraySiz
   }
 }
 
+// Lin→exp mapping for ADSR fader lookup table (filled in setup).
 uint16_t linearToExponential(uint16_t linearValue, float base, uint16_t maxValue) {
 
   if (linearValue < 0) linearValue = 0;

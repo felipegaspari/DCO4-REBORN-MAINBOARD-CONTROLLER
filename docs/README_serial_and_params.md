@@ -4,6 +4,13 @@ This document explains how to use the shared **serial** and **parameter** infras
 
 The goal: you can copy the library headers into a new project, define a few hooks, and immediately speak the same protocol.
 
+### Mainboard notes (this repo)
+
+- Param apply value type: **`int32_t`** (`params.ino`).
+- Live UARTs: **Serial2** ↔ DCO, **Serial8** ↔ Input, **Serial1** ↔ Screen (TX used; **RX is a stub** — `read_serial_1` has an empty switch).
+- This repo’s copy of `params_def.h` is treated as the coordination point for shared ParamId numbers (see header comments). Do not renumber casually.
+- Pipeline / pin detail: [`MODULATION_PIPELINE.md`](MODULATION_PIPELINE.md), [`CV_AND_PINS.md`](CV_AND_PINS.md).
+
 ---
 
 ## 1. Shared “library” headers

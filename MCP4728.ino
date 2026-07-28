@@ -10,6 +10,7 @@ MCP4728 mcp;
 MCP4728 mcp2;
 MCP4728 mcp3;
 
+// Boot: I2C @ 1 MHz, attach three MCP4728s, write mid/high idle levels.
 void init_MCP4728() {
 
   Wire.setSDA(PB_9);

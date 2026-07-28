@@ -1,14 +1,17 @@
+// Boot: configure LFO1 and LFO2 defaults.
 void init_LFOs() {
   init_LFO1();
   init_LFO2();
 }
 
+// Boot: configure per-voice VCF drift LFOs.
 void init_DRIFT_LFOs() {
   for (int i = 0; i < NUM_VOICES; i++) {
     init_DRIFT_LFO(LFO_DRIFT_CLASS[i], LFO_DRIFT_CC, i);
   }
 }
 
+// Configure one drift LFO wave/amp/freq with a per-voice speed offset.
 void init_DRIFT_LFO(lfo &LFO, int CC, byte LFONumber) {
   LFO_DRIFT_SPEED_OFFSET[LFONumber] = (float)(1.00f - 0.20f + (0.05f * LFONumber)) * LFO_DRIFT_SPEED;
   LFO.setWaveForm(LFO_DRIFT_WAVEFORM);                  // inicializar forma de onda
@@ -18,6 +21,7 @@ void init_DRIFT_LFO(lfo &LFO, int CC, byte LFONumber) {
   LFO.setMode0Freq(LFO_DRIFT_SPEED_OFFSET[LFONumber]);  // establecer LFO a 0.5 Hz
 }
 
+// Boot defaults for LFO1 (wave, amp, ~0.5 Hz).
 void init_LFO1() {
   LFO1_class.setWaveForm(2);     // initialize waveform
   LFO1_class.setAmpl(LFO1_CC);   // set amplitude to maximum
@@ -27,6 +31,7 @@ void init_LFO1() {
 }
 
 
+// Boot defaults for LFO2 (wave, amp, ~5 Hz).
 void init_LFO2() {
   LFO2_class.setWaveForm(2);    // initialize waveform
   LFO2_class.setAmpl(LFO2_CC);  // set amplitude to maximum
@@ -35,16 +40,19 @@ void init_LFO2() {
   LFO2_class.setMode0Freq(5);   // set LFO to 30 Hz
 }
 
+// Hot path: sample bipolar LFO1 level into LFO1Level.
 inline void LFO1() {
   //tLFO1 = micros();                                     // take timestamp
   LFO1Level = LFO1_CC_HALF - LFO1_class.getWave(micros());
 }
 
+// Hot path: sample bipolar LFO2 level into LFO2Level.
 inline void LFO2() {
   //tLFO2 = micros();                                     // take timestamp
   LFO2Level = LFO2_CC_HALF - LFO2_class.getWave(micros());
 }
 
+// ~1 ms: sample drift LFOs and compute VCF_DRIFT[] from analogDrift.
 inline void DRIFT_LFOs() {
   unsigned long currentMicros = micros();
   for (int i = 0; i < NUM_VOICES; i++) {

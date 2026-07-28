@@ -9,6 +9,7 @@
 //9 LFO1toDCO
 //10 ADSR3toDETUNE1
 
+// Recompute a modulation depth/keytrack formula scalar (see case index comments above).
 void formula_update(byte formulaN) {
   switch (formulaN) {
     case 1:
@@ -51,6 +52,7 @@ void formula_update(byte formulaN) {
   }
 }
 
+// Recompute LFO speed/depth control curves (exp converters) and apply to LFO objects.
 void controls_formula_update(byte formulaN) {
   switch (formulaN) {
     case 1:

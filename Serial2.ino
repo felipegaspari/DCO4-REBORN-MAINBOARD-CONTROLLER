@@ -1,3 +1,4 @@
+// ~99 µs: flush pending ADSR3 ('s'), PW ('f'), and buffered 'w'/'p' frames to DCO.
 inline void sendSerial() {
   // if (sendDetune2Flag) {
   //   if (Serial2.availableForWrite() > 1) {
@@ -154,6 +155,7 @@ inline void sendSerial() {
   }
 }
 
+// Immediate 'p' (16-bit) to Screen on Serial1. Currently unused (no live callers).
 void serial_send_param_change(byte param, uint16_t paramValue) {
 
   byte bytesArray[5] = { (uint8_t)'p', param, highByte(paramValue), lowByte(paramValue), finishByte };
@@ -163,6 +165,7 @@ void serial_send_param_change(byte param, uint16_t paramValue) {
 #endif
 }
 
+// Blocking 'x' (32-bit) to DCO. Currently unused (no live callers).
 void serialSendParam32ToDCO(byte paramNumber, uint32_t paramValue) {
   uint8_t *b = (uint8_t *)&paramValue;
   byte bytesArray[7] = { (uint8_t)'x', paramNumber, b[0], b[1], b[2], b[3], finishByte };
@@ -170,6 +173,7 @@ void serialSendParam32ToDCO(byte paramNumber, uint32_t paramValue) {
   Serial2.write(bytesArray, 7);
 }
 
+// Blocking 'x' (32-bit) to Screen (e.g. gap from DCO).
 void serialSendParam32ToScreen(byte paramNumber, uint32_t paramValue) {
   uint8_t *b = (uint8_t *)&paramValue;
   byte bytesArray[7] = { (uint8_t)'x', paramNumber, b[0], b[1], b[2], b[3], finishByte };
@@ -187,6 +191,7 @@ void serialSendParam32ToInput(byte paramNumber, uint32_t paramValue) {
 #endif
 }
 
+// Immediate 'y' (8-bit) to Screen. Currently unused (no live callers).
 inline void serialSendParamByteToScreen(byte paramNumber, byte paramValue)
 {
  while(Serial1.availableForWrite() < 4) {};
@@ -194,6 +199,7 @@ inline void serialSendParamByteToScreen(byte paramNumber, byte paramValue)
   Serial1.write(bytesArray, 4);
 }
 
+// Immediate 'w' (8-bit) to DCO — used by many apply_param_* forwards.
 inline void serialSendParamByteToDCOFunction(byte paramNumber, byte paramValue)
 {
  while(Serial2.availableForWrite() < 4) {};
@@ -201,6 +207,7 @@ inline void serialSendParamByteToDCOFunction(byte paramNumber, byte paramValue)
   Serial2.write(bytesArray, 4);
 }
 
+// Immediate 'p' (16-bit) to DCO — used by several apply_param_* forwards.
 inline void serialSendParamToDCOFunction(uint8_t paramNumber, int paramValue)
 {
   while(Serial2.availableForWrite() < 5) {};
