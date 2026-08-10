@@ -6,9 +6,9 @@ The goal: you can copy the library headers into a new project, define a few hook
 
 ### Mainboard notes (this repo)
 
-- Param apply value type: **`int32_t`** (`params.ino`).
-- Live UARTs: **Serial2** ↔ DCO, **Serial8** ↔ Input, **Serial1** ↔ Screen (TX used; **RX is a stub** — `read_serial_1` has an empty switch).
-- This repo’s copy of `params_def.h` is treated as the coordination point for shared ParamId numbers (see header comments). Do not renumber casually.
+- Param apply value type: **`int16_t`** jump table (`params.ino` / `param_router.h`).
+- Live UARTs: **Serial2** ↔ DCO, **Serial8** ↔ Input, **Serial1** ↔ Screen (TX used; **RX is a stub**).
+- Canonical ParamIds: DCO `params_def.h` (copied here). Do not renumber.
 - Pipeline / pin detail: [`MODULATION_PIPELINE.md`](MODULATION_PIPELINE.md), [`CV_AND_PINS.md`](CV_AND_PINS.md).
 
 ---
@@ -20,8 +20,8 @@ These files are intended to be MCU‑agnostic and copy‑pasteable between proje
 - `params_def.h` – canonical `enum ParamId : uint16_t` for the whole system.
 - `param_router.h` – generic table‑driven parameter router (`ParamDescriptorT` + `param_router_apply`).
 - `serial_param_protocol.h` – decode helpers for `'p'/'w'/'x'` parameter frames into `ParamFrame { id, value }`.
-- `serial_protocol.h` – command bytes and payload sizes for the **mainboard ↔ DCO** link (`'n','o','f','s','p','w','x'`).
-- `serial_input_protocol.h` – command bytes and payload sizes for the **input board → mainboard** link (`'a'..'f','p','w','q'`).
+- `serial_protocol.h` – mainboard ↔ DCO (`'n','o','e','m','p','x'`).
+- `serial_input_protocol.h` – Input → mainboard (`'a'..'d','p','q'` + `'x'` relay).
 - `serial_parser.h` – generic non‑blocking state‑machine parser (`SerialParserContext`, `SerialCommandDef`, `serial_parser_process_byte`).
 
 You can treat these as the “library core.”

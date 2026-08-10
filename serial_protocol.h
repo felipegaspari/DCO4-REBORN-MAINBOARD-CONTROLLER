@@ -2,103 +2,56 @@
 #define SERIAL_PROTOCOL_H
 
 #include <stdint.h>
+#include "serial_input_protocol.h"
 
 // -----------------------------------------------------------------------------
-// Serial protocol: command byte definitions and payload sizes.
-// This is the SINGLE source of truth for the on-wire protocol between the
-// mainboard and the DCO board. All MCUs use the same command set, even if
-// some commands are ignored on a particular board.
-//
-// Frames on the wire have the form:
-//   [1 byte] command character
-//   [N bytes] payload (length depends on command, defined below)
+// Mainboard ↔ DCO slim LE command set (Serial2 @ 2.5 M).
+// See docs/MAINBOARD_REINTEGRATION.md.
 // -----------------------------------------------------------------------------
 
-// Command bytes (char) used on the high-speed links (mainboard <-> DCO).
-// Semantics:
-//
-//   'n' : NOTE ON   (DCO -> mainboard)
-//   'o' : NOTE OFF  (DCO -> mainboard)
-//
-//   'f' : PW UPDATE (mainboard -> DCO)
-//   's' : ADSR BLOCK (mainboard -> DCO)
-//
-//   'p' : PARAM 16-bit (id + int16 BE + finish)
-//   'w' : PARAM 8-bit  (id + int8  + finish)
-//   'x' : PARAM 32-bit (id + uint32 LE + finish)
-//
-// Other links (e.g. Serial8 to the input board) have additional commands,
-// but this header focuses on the core mainboard<->DCO protocol.
-enum SerialCmd : char {
-  SERIAL_CMD_NOTE_ON    = 'n',
-  SERIAL_CMD_NOTE_OFF   = 'o',
-
-  SERIAL_CMD_PW_UPDATE  = 'f',
-  SERIAL_CMD_ADSR_BLOCK = 's',
-
-  SERIAL_CMD_PARAM_16   = 'p',
-  SERIAL_CMD_PARAM_8    = 'w',
-  SERIAL_CMD_PARAM_32   = 'x',
+enum SerialCmd : uint8_t {
+  SERIAL_CMD_NOTE_ON     = 'n',  // DCO → MB
+  SERIAL_CMD_NOTE_OFF    = 'o',  // DCO → MB
+  SERIAL_CMD_EXPRESSION  = 'e',  // DCO → MB  AT / MW / pitch bend
+  SERIAL_CMD_MOD_STREAM  = 'm',  // MB → DCO  LFO + EnvDCO + matrix pitch
+  SERIAL_CMD_BENCH_TEXT  = 't',  // MB → DCO  dump ASCII chunk
+  SERIAL_CMD_PARAM_16    = 'p',
+  SERIAL_CMD_PARAM_32    = 'x',
 };
 
-// Canonical payload sizes (NOT counting the command byte itself).
-// These must match the on-wire layouts used by all MCUs.
-//
-// NOTE ON ('n'):
-//   payload[0] = voice index
-//   payload[1] = velocity
-//   payload[2] = MIDI note
-static constexpr uint8_t SERIAL_PAYLOAD_LEN_NOTE_ON    = 3;
+// 'n': [voice][vel][note][flags]  flags bit0=retrigger ADSR, bit1=porta-only
+static constexpr uint8_t SERIAL_PAYLOAD_LEN_NOTE_ON    = 4;
+static constexpr uint8_t NOTE_FLAG_RETRIGGER           = (1u << 0);
+static constexpr uint8_t NOTE_FLAG_PORTA_ONLY          = (1u << 1);
 
-// NOTE OFF ('o'):
-//   payload[0] = voice index
+// 'o': [voice]
 static constexpr uint8_t SERIAL_PAYLOAD_LEN_NOTE_OFF   = 1;
 
-// PW UPDATE ('f'):
-//   payload[0..1] = uint16_t pwRaw (little-endian)
-static constexpr uint8_t SERIAL_PAYLOAD_LEN_PW_UPDATE  = 2;
+// 'e': [aftertouch u8][modwheel u8][pitch_bend u16 LE]
+static constexpr uint8_t SERIAL_PAYLOAD_LEN_EXPRESSION = 4;
 
-// ADSR BLOCK ('s'):
-//   payload[0..1] = ADSR_attack  (big-endian)
-//   payload[2..3] = ADSR_decay   (big-endian)
-//   payload[4..5] = ADSR_sustain (big-endian)
-//   payload[6..7] = ADSR_release (big-endian)
-static constexpr uint8_t SERIAL_PAYLOAD_LEN_ADSR_BLOCK = 8;
+// 'm': LFO1 i16, LFO2 i16, EnvDCO_q15[4] i16, matrix_pitch_q24 i32  (all LE)
+static constexpr uint8_t SERIAL_PAYLOAD_LEN_MOD_STREAM = 16;
 
-// PARAM 16-bit ('p'):
-//   payload[0]   = paramNumber (ParamId)
-//   payload[1..2]= int16 value, big-endian
-//   payload[3]   = finish byte (usually 1)
-static constexpr uint8_t SERIAL_PAYLOAD_LEN_PARAM_16   = 4;
+// 't': [n:u8][n bytes ASCII][pad to 16]; n <= 15
+static constexpr uint8_t SERIAL_PAYLOAD_LEN_BENCH_TEXT = 16;
+static constexpr uint8_t SERIAL_BENCH_TEXT_DATA_MAX    = 15;
 
-// PARAM 8-bit ('w'):
-//   payload[0]   = paramNumber (ParamId)
-//   payload[1]   = int8 value (sign-extended)
-//   payload[2]   = finish byte (usually 1)
-static constexpr uint8_t SERIAL_PAYLOAD_LEN_PARAM_8    = 3;
-
-// PARAM 32-bit ('x'):
-//   payload[0]   = paramNumber (ParamId)
-//   payload[1..4]= uint32 value, little-endian
-//   payload[5]   = finish byte (usually 1)
-static constexpr uint8_t SERIAL_PAYLOAD_LEN_PARAM_32   = 6;
-
-// Helper: return canonical payload length for a command.
-// Every MCU should use this so that the parser treats commands consistently.
-static inline uint8_t serial_protocol_payload_len(char cmd) {
+static inline uint8_t serial_protocol_payload_len(uint8_t cmd) {
   switch (cmd) {
-    case SERIAL_CMD_NOTE_ON:    return SERIAL_PAYLOAD_LEN_NOTE_ON;
-    case SERIAL_CMD_NOTE_OFF:   return SERIAL_PAYLOAD_LEN_NOTE_OFF;
-    case SERIAL_CMD_PW_UPDATE:  return SERIAL_PAYLOAD_LEN_PW_UPDATE;
-    case SERIAL_CMD_ADSR_BLOCK: return SERIAL_PAYLOAD_LEN_ADSR_BLOCK;
-    case SERIAL_CMD_PARAM_16:   return SERIAL_PAYLOAD_LEN_PARAM_16;
-    case SERIAL_CMD_PARAM_8:    return SERIAL_PAYLOAD_LEN_PARAM_8;
-    case SERIAL_CMD_PARAM_32:   return SERIAL_PAYLOAD_LEN_PARAM_32;
-    default:                    return 0; // unknown or unsupported command
+    case SERIAL_CMD_NOTE_ON:     return SERIAL_PAYLOAD_LEN_NOTE_ON;
+    case SERIAL_CMD_NOTE_OFF:    return SERIAL_PAYLOAD_LEN_NOTE_OFF;
+    case SERIAL_CMD_EXPRESSION:  return SERIAL_PAYLOAD_LEN_EXPRESSION;
+    case SERIAL_CMD_MOD_STREAM:  return SERIAL_PAYLOAD_LEN_MOD_STREAM;
+    case SERIAL_CMD_BENCH_TEXT:  return SERIAL_PAYLOAD_LEN_BENCH_TEXT;
+    case SERIAL_CMD_PARAM_16:    return INPUT_SERIAL_LEN_PARAM_16;
+    case SERIAL_CMD_PARAM_32:    return INPUT_SERIAL_LEN_PARAM_32;
+    // USB/MIDI analog mirror (Input cmds on DCO→MB Serial2). 'c' EnvDCO stays DCO-local.
+    case INPUT_CMD_ADSR1_BLOCK:
+    case INPUT_CMD_ADSR2_BLOCK:  return INPUT_SERIAL_LEN_ADSR_BLOCK;
+    case INPUT_CMD_FILTER_BLOCK: return INPUT_SERIAL_LEN_FILTER_BLOCK;
+    default:                     return 0;
   }
 }
 
 #endif // SERIAL_PROTOCOL_H
-
-
-

@@ -1,6 +1,8 @@
 # Mainboard modulation pipeline
 
-How notes and panel data become CVs and DCO updates on **DCO4_Mainboard_Controller**.
+How notes and panel data become CVs and the DCO `'m'` stream on **DCO4_Mainboard_Controller**.
+
+Math source: DCO3 `cv_out` / ADSR / LFO / matrix (Q15/Q24 bake-on-write). Writers stay STM32 timer PWM + MCP4728 + 74HC595.
 
 ---
 
@@ -8,20 +10,23 @@ How notes and panel data become CVs and DCO updates on **DCO4_Mainboard_Controll
 
 ```mermaid
 flowchart LR
-  DCO["DCO Serial2\n'n'/'o' notes\n'p'/'w'/'x' params"] --> Notes["note[] / velocity[]\nnoteStart / noteEnd"]
-  Input["Input Serial8\n'a'..'f' blocks\n'p'/'w'"] --> Params["update_parameters\n+ ADSR/filter/PW"]
-  Notes --> ADSR["ADSR_update\nADSR1/2/3 levels"]
-  Params --> Formulas["formula_update\ncontrols_formula_update"]
-  Formulas --> ADSR
+  DCO["DCO Serial2\n'n'/'o'/'e'\n'p'/'x'\n'a'/'b'/'d'"] --> Notes["note[] / velocity[]\nnoteStart / noteEnd"]
+  DCO --> Params["update_parameters\n+ ADSR/filter/PW"]
+  Input["Input Serial8\n'a'..'d'\n'p'/'q'"] --> Params
+  Notes --> ADSR["ADSR_update\nEnvVCA/VCF/DCO Q15"]
+  Params --> ADSR
   Params --> LFO["LFO1 / LFO2\nDRIFT_LFOs"]
-  ADSR --> PWM["setPWMOuts"]
-  LFO --> PWM
-  PWM --> Timers["Timer PWM\nVCF / VCA / RESO"]
+  ADSR --> CV["update_CV_outs"]
+  LFO --> CV
+  Params --> Matrix["mod_matrix"]
+  Matrix --> CV
+  CV --> Timers["Timer PWM\nVCF / VCA / RESO"]
   Params --> MCP["mcpUpdate\nSQR / Sub DACs"]
   Params --> Wave["update_waveSelector"]
-  ADSR --> Send["sendSerial\n's' ADSR3, 'f' PW"]
-  Params --> Send
-  Send --> DCOOut["DCO Serial2 TX"]
+  LFO --> M["sendSerial 'm' @ 1 ms"]
+  ADSR --> M
+  Matrix --> M
+  M --> DCOOut["DCO Serial2 TX"]
 ```
 
 ---
@@ -30,22 +35,22 @@ flowchart LR
 
 | Cadence | Work |
 |---------|------|
-| Every loop | `millisTimer`; `read_serial_2`; `LFO1`/`LFO2`; `ADSR_update`; `setPWMOuts` or manual-cal; clear `noteStart`/`noteEnd` buffers after use |
-| ~223 µs | `read_serial_1` (RX stub), `read_serial_8` (Input) |
-| ~1 ms | If ADSR3 enabled → request `'s'` send; if PWM pots manual → request `'f'`; `DRIFT_LFOs` |
-| ~99 µs | `sendSerial()` → DCO |
+| Every loop | `millisTimer`; `read_serial_2`; `LFO1`/`LFO2`; `ADSR_update`; `update_CV_outs` or manual-cal |
+| ~223 µs | `read_serial_1` (RX stub), `read_serial_8` (Input slim LE) |
+| ~1 ms | `DRIFT_LFOs`; `sendSerial()` → `'m'` to DCO; relay `'x'`/`'p'` as needed |
 
 ---
 
 ## Notes (DCO → envelopes)
 
-1. DCO allocates voices and sends `'n'` / `'o'` on Serial2.
-2. `main_handle_note_on` / `main_handle_note_off` fill `note[]`, `velocity[]`, `noteStart[]`, `noteEnd[]`.
-3. `ADSR_update()` gates noteOn/noteOff on three Bézier ADSRs per voice:
-   - **ADSR1** → VCA path
-   - **ADSR2** → VCF path
-   - **ADSR3** → primarily forwarded to DCO (pitch/PWM on voice board); levels also sampled locally
-4. Sustain parameters are refreshed ~every 5 ms in `ADSR_set_parameters()`.
+1. DCO MIDI allocator sends `'n'` / `'o'` on Serial2 (raw MIDI note + velocity + flags).
+2. Flags: bit0 = retrigger envelopes, bit1 = porta-only (mono stack fallback must **not** retrigger ADSR).
+3. `'o'` only when the voice actually gates off.
+4. `ADSR_update()` gates noteOn/noteOff on three Q15 Bézier ADSRs per voice:
+   - **EnvVCA** → analog VCA PWM
+   - **EnvVCF** → analog VCF PWM (per voice)
+   - **EnvDCO** → streamed to DCO on `'m'` (pitch/PW depths applied on the voice board)
+5. `'e'` updates aftertouch / mod wheel / pitch bend for matrix sources 7/11.
 
 ---
 
@@ -53,70 +58,70 @@ flowchart LR
 
 | Cmd | Handler | Effect |
 |-----|---------|--------|
-| `'a'` | `input_handle_adsr1` | ADSR1 A/D/S/R |
-| `'b'` | `input_handle_adsr2` | ADSR2 A/D/S/R |
-| `'c'` | `input_handle_adsr3` | ADSR3 A/D/S/R + set send flag |
-| `'d'` | `input_handle_filter_block` | CUTOFF, RESONANCE, ADSR2toVCF, LFO2toVCF + `formula_update(4)`/`(2)` |
-| `'e'` | `input_handle_adsr1_to_vca` | ADSR1→VCA depth |
-| `'f'` | `input_handle_pw` | Pulse width `PW` |
-| `'p'`/`'w'` | param handlers | `update_parameters` |
-| `'q'` | preset name | Copies 8 chars (local display/state; storage on Input) |
+| `'a'` | `input_handle_adsr1` | EnvVCA A/D/S/R |
+| `'b'` | `input_handle_adsr2` | EnvVCF A/D/S/R |
+| `'c'` | `input_handle_adsr3` | EnvDCO A/D/S/R |
+| `'d'` | `input_handle_filter_block` | CUTOFF, RESONANCE, ADSR2→VCF, LFO2→VCF + scale bake |
+| `'p'` | param handler | `update_parameters` (PW=210, ADSR1→VCA=222) |
+| `'q'` | preset name | Copies 8 chars |
 
-Param value type on this MCU: **`int32_t`**.
+Param apply type: **`int16_t`** jump table. No Input `'e'`/`'f'` blocks.
 
 ---
 
-## CV math (`setPWMOuts`)
+## CV math (`update_CV_outs`)
 
 ### VCA (per voice)
 
-- Combine `ADSR1Level[i]` + optional LFO1→VCA (only if ADSR1 ≠ 0).
-- Apply velocity→VCA factor.
-- Map through `AS2164_VCA_linearize_table` and `linearInterpolation` into PWM range using `VCAResonanceCompensation` and `VCALevel`.
-- Resonance compensation (when enabled) updates on the 1 ms flag from `RESONANCE`.
+- EnvVCA Q15 + optional LFO1→VCA (`/1024`, negative LFO polarity) + ADSR1→VCA (`/512`).
+- Velocity→VCA factor.
+- AS2164 Bézier linearize + reso→VCA lerp (`VCAResonanceCompensation`).
 
 ### VCF (per voice)
 
-- `ADSR2Level[i] * ADSR2toVCF_formula` + `LFO2Level * LFO2toVCF_formula` + `CUTOFF` + `VCF_DRIFT[i]`.
-- Scale by velocity→VCF and keytrack (`VCFKeytrackPerVoice`, refreshed on 1 ms when keytrack ≠ 0).
+- EnvVCF Q15 × ADSR2→VCF scale + LFO2 Q15 × LFO2→VCF scale + `CUTOFF` + `VCF_DRIFT[i]` + keytrack.
 - Output inverted into timer range: `VCF_PWM[i] = 4095 - constrain(...)`.
 
 ### Resonance
 
-- Global `RESONANCE` written to all four resonance timer channels.
+- Global `RESONANCE` (+ matrix dest) written to four resonance timer channels.
 
-Formulas for depths/speeds live in `formulas.ino` (`formula_update` / `controls_formula_update`).
+Scales bake on param write (`cv_bake_*`). See DCO [`docs/CV_MOD_SCALES.md`](../../DCO/docs/CV_MOD_SCALES.md).
 
 ---
 
 ## Back to the DCO (`sendSerial`)
 
-Live TX paths (others are commented historical one-offs):
+`'m'` @ ~1 kHz, 16 bytes LE after cmd:
 
-| When | Frame | Payload |
-|------|-------|---------|
-| `serialSendADSR3ControlValuesFlag` | `'s'` | ADSR3 A/D/S/R words (9 bytes) |
-| `serialSendPWFlag` | `'f'` | 16-bit `PW` |
-| Buffered queues | `'w'` / `'p'` | See `serialSendParamByteToDCOBuf` / `serialSendParamToDCOBuf` — **currently never filled**; real forwards use immediate `serialSendParamByteToDCOFunction` / `serialSendParamToDCOFunction` from `apply_param_*` |
+| Offset | Field |
+|--------|-------|
+| 0–1 | LFO1 Q15 |
+| 2–3 | LFO2 Q15 |
+| 4–11 | EnvDCO Q15 ×4 |
+| 12–15 | matrix pitch Q24 |
 
-Many DCO-owned params are applied locally (for UI/state) **and** forwarded in the apply function.
+DCO applies streamed Q15 with **local depth bakes** (`LFO1_TO_DCO`, per-osc 216–218, `ADSR3_TO_DETUNE1`, `LFO2_TO_PW`, Character). Pitch drift stays on DCO.
+
+DCO-owned ParamIds forward immediately via slim `'p'`. Gap 154 / cal 155 from DCO `'x'` relay to Input (and 154 optionally to Screen).
 
 ---
 
 ## Manual calibration
 
-When `manualCalibrationFlag` is set (params):
+When `manualCalibrationFlag` is set:
 
-- `loop` calls `setPWMOutsManualCalibration()` instead of `setPWMOuts()`.
-- Forces wave mux / SQR levels for `manualCalibrationStage`, lowers VCA on the active voice, zeros resonance/cutoff for the cal path, updates mux + MCP4728.
-- Related ParamIds also forward stage/offset/store to DCO / Input / Screen as needed.
+- `loop` calls `update_CV_outs_manual_calibration()` instead of `update_CV_outs()`.
+- Mutes mux / parks VCA / forces SQR levels for `manualCalibrationStage`.
+- Related ParamIds forward stage/offset/store to DCO.
 
 ---
 
 ## Inactive pieces
 
-- **Screen RX** (`read_serial_1`): switch empty; TX helpers (`serial_send_param_change`, `'x'`/`'y'`) still used for some cal/gap reporting.
+- **Screen RX** (`read_serial_1`): drain-only stub.
 - **Local presets** (`flashData.ino`): commented out.
-- **SPI DAC / Screen module / autotune**: compile flags off or includes commented.
+- **SPI DAC / Screen module / autotune**: flags off.
+- **Float-era `formulas.ino` / `setPWMOuts` / `'s'`/`'f'` streams:** retired.
 
 Pin tables: [`CV_AND_PINS.md`](CV_AND_PINS.md). Semantic map: [`REFERENCE_AI.md`](REFERENCE_AI.md).

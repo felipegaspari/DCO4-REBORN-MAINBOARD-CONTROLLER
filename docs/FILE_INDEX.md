@@ -6,13 +6,14 @@ Purpose of **every file**, and for each source function: **what it does**, **who
 - CV / pin map: [`CV_AND_PINS.md`](CV_AND_PINS.md)
 - Modulation math: [`MODULATION_PIPELINE.md`](MODULATION_PIPELINE.md)
 - Serial / ParamId how-to: [`README_serial_and_params.md`](README_serial_and_params.md)
-- Four-board topology: [`SYSTEM_OVERVIEW.md`](SYSTEM_OVERVIEW.md) (stub → DCO4_DCO canonical)
+- Four-board topology: [`SYSTEM_OVERVIEW.md`](SYSTEM_OVERVIEW.md) → DCO `docs/SYSTEM_OVERVIEW.md`
+- Reintegration: [`MAINBOARD_REINTEGRATION.md`](MAINBOARD_REINTEGRATION.md)
 - Repo entry / doc index: [`../README.md`](../README.md)
 
 Headers with no bodies are marked **no function definitions**.  
 **Dead** = no live callers. **Unreachable** = call site exists but cannot run as currently gated. **`#ifdef` gated** = compiled only when the flag is set. **commented-out** = body fully commented (not compiled).
 
-MCU: **STM32** (single Arduino core). Modulation brain: ADSRs, LFOs, filter/VCA CVs (hardware timers + MCP4728 DACs), wave select, param routing between DCO / Input / Screen.
+MCU: **STM32** (single Arduino core). Analog/modulation hub: Q15 ADSRs/LFOs/matrix, filter/VCA CVs (hardware timers + MCP4728), wave select, slim LE param routing between DCO / Input / Screen.
 
 ---
 
@@ -31,24 +32,22 @@ flowchart TD
   setupFn --> initWave["init_waveSelector"]
   setupFn --> initMcp["init_MCP4728"]
   setupFn --> uartBegin["Serial / Serial1 / Serial2 / Serial8 begin"]
-  setupFn --> formulasBoot["formula_update + controls_formula_update 0..9"]
+  setupFn --> initCv["init_cv_out / init_param_router / init_serial_parsers"]
 
   loopFn --> millis["millisTimer()"]
   loopFn --> serial223{"timer223microsFlag?"}
   serial223 -->|yes| rs18["read_serial_1 + read_serial_8"]
   loopFn --> rs2["read_serial_2()"]
   loopFn --> oneMs{"timer1msFlag?"}
-  oneMs -->|yes| drift["DRIFT_LFOs + ADSR3/PW send flags"]
+  oneMs -->|yes| drift["DRIFT_LFOs + sendSerial 'm'"]
   loopFn --> lfos["LFO1 + LFO2"]
   loopFn --> adsr["ADSR_update"]
   loopFn --> pwmBranch{"manualCalibrationFlag?"}
-  pwmBranch -->|false| pwm["setPWMOuts"]
-  pwmBranch -->|true| pwmMan["setPWMOutsManualCalibration"]
-  loopFn --> send99{"timer99microsFlag?"}
-  send99 -->|yes| send["sendSerial → DCO"]
+  pwmBranch -->|false| pwm["update_CV_outs"]
+  pwmBranch -->|true| pwmMan["update_CV_outs_manual_calibration"]
 
-  rs2 --> handlers2["main_handle_* → notes / update_parameters"]
-  rs18 --> handlers8["input_handle_* → ADSR/filter/PW / update_parameters"]
+  rs2 --> handlers2["main_handle_* → notes / expression / update_parameters"]
+  rs18 --> handlers8["input_handle_* → ADSR/filter / update_parameters"]
   handlers2 --> upd["update_parameters → param_router_apply → apply_param_*"]
   handlers8 --> upd
 ```
@@ -63,8 +62,8 @@ flowchart TD
 | Serial8 (Input) | Parser command on input link (`read_serial_8`) |
 | Serial1 (Screen) | Screen UART; RX stub today, TX used by some sends |
 | Param table | Only via `paramTable[]` / `param_router_apply` / `update_parameters` |
-| Hot path | `ADSR_update` / `setPWMOuts` / LFO every `loop` |
-| Manual-cal | `manualCalibrationFlag` → `setPWMOutsManualCalibration` |
+| Hot path | `ADSR_update` / `update_CV_outs` / LFO every `loop` |
+| Manual-cal | `manualCalibrationFlag` → `update_CV_outs_manual_calibration` |
 | `#ifdef` | `ENABLE_SERIAL*`, `RUNNING_AVERAGE`, `ENABLE_SPI`, `ENABLE_SD`, `ENABLE_SCREEN` |
 
 ---
@@ -76,11 +75,11 @@ flowchart TD
 Main sketch: single-core `setup`/`loop`, UART bring-up, soft-timer scheduling, ADSR/LFO/PWM hot path.
 
 **Functions**
-- `setup()` — Init aux, hardware PWM timers, LFOs + drift LFOs, ADSR, VCA Bézier table, lin→exp ADSR fader table, wave mux, MCP4728; open Serial/1/2/8; seed formulas 0..9; clear VCF keytrack/velocity.
+- `setup()` — Init aux, hardware PWM timers, LFOs + drift LFOs, ADSR, `init_cv_out`, jump-table router, serial parsers, wave mux, MCP4728; open Serial/1/2/8.
   - **Called from:** Arduino framework.
   - **When:** Boot once.
   - Notes: `initScreen` / `init_BU2505FV` / `initEEPROM` / `initAutotune` call sites are commented or `#ifdef`-gated off.
-- `loop()` — Soft timers; ~223 µs Serial1+8; always Serial2; 1 ms drift + send flags; LFO1/2; ADSR; PWM (play vs manual-cal); ~99 µs `sendSerial`; optional `RUNNING_AVERAGE` print.
+- `loop()` — Soft timers; ~223 µs Serial1+8; always Serial2; 1 ms drift + `'m'` TX; LFO1/2; ADSR; `update_CV_outs` (play vs manual-cal).
   - **Called from:** Arduino framework.
   - **When:** Forever.
 - `print_mainboard_loop_timings()` — Print RunningAverage loop section averages to USB Serial.
@@ -91,7 +90,7 @@ Main sketch: single-core `setup`/`loop`, UART bring-up, soft-timer scheduling, A
 
 ### `include_all.h`
 
-Umbrella include (also pulled oddly from inside `setPWMOuts()`). **No function definitions.**
+Umbrella include (also pulled oddly from inside `update_CV_outs()`). **No function definitions.**
 
 ### `build_opt.h`
 
@@ -140,29 +139,20 @@ Inbound parsers: Serial1 (stub), Serial2 (DCO), Serial8 (Input).
   - **Called from:** `loop()` every iteration.
   - **When:** Every `loop`; body under `#ifdef ENABLE_SERIAL2`.
 - `input_handle_adsr1()` — Load ADSR1 A/D/S/R words.
-  - **Called from:** Serial8 parser.
-  - **When:** Input `'a'`.
+  - **Called from:** Serial8 parser; Serial2 parser (USB/MIDI mirror).
+  - **When:** Input `'a'` or DCO `'a'`.
 - `input_handle_adsr2()` — Load ADSR2 A/D/S/R.
-  - **Called from:** Serial8 parser.
-  - **When:** Input `'b'`.
-- `input_handle_adsr3()` — Load ADSR3 A/D/S/R; set `serialSendADSR3ControlValuesFlag`.
+  - **Called from:** Serial8 parser; Serial2 parser (USB/MIDI mirror).
+  - **When:** Input `'b'` or DCO `'b'`.
+- `input_handle_adsr3()` — Load EnvDCO A/D/S/R.
   - **Called from:** Serial8 parser.
   - **When:** Input `'c'`.
-- `input_handle_filter_block()` — CUTOFF / RESONANCE / ADSR2toVCF / LFO2toVCF; `formula_update(4)` + `(2)`.
-  - **Called from:** Serial8 parser.
-  - **When:** Input `'d'`.
-- `input_handle_adsr1_to_vca()` — Set `ADSR1toVCA`.
-  - **Called from:** Serial8 parser.
-  - **When:** Input `'e'`.
-- `input_handle_pw()` — Set `PW`.
-  - **Called from:** Serial8 parser.
-  - **When:** Input `'f'`.
-- `input_handle_param16()` — `decode_param_p` → `update_parameters`.
+- `input_handle_filter_block()` — CUTOFF / RESONANCE / ADSR2toVCF / LFO2toVCF; scale bake.
+  - **Called from:** Serial8 parser; Serial2 parser (USB/MIDI mirror).
+  - **When:** Input `'d'` or DCO `'d'`.
+- `input_handle_param16()` — `decode_param_p` → `update_parameters` (PW=210, ADSR1→VCA=222).
   - **Called from:** Serial8 parser.
   - **When:** Input `'p'`.
-- `input_handle_param8()` — `decode_param_w` → `update_parameters`.
-  - **Called from:** Serial8 parser.
-  - **When:** Input `'w'`.
 - `input_handle_preset_name()` — Copy 8 chars into `presetName`.
   - **Called from:** Serial8 parser.
   - **When:** Input `'q'`.
@@ -175,9 +165,9 @@ Inbound parsers: Serial1 (stub), Serial2 (DCO), Serial8 (Input).
 Outbound frames to DCO / Screen / Input.
 
 **Functions**
-- `sendSerial()` — Send pending ADSR3 block (`'s'`), PW (`'f'`), and buffered `'w'`/`'p'` if queue slots non-zero. Many older dedicated sends are **commented-out**.
-  - **Called from:** `loop()` when `timer99microsFlag`.
-  - **When:** Soft timer ~99 µs.
+- `sendSerial()` — TX `'m'` mod stream (LFO1/2 Q15 + EnvDCO Q15×4 + matrix pitch Q24).
+  - **Called from:** `loop()` when `timer1msFlag`.
+  - **When:** Soft timer ~1 ms.
   - Note: `serialSendParamByteToDCOBuf` / `serialSendParamToDCOBuf` are **never written** anywhere → those two branches are effectively **Dead** (always empty).
 - `serial_send_param_change(byte, uint16_t)` — Immediate `'p'` to Screen (Serial1).
   - **Called from:** **none (dead)** — only commented sites in `loop` / ParamId overload.
@@ -392,32 +382,23 @@ LFO classes, drift LFOs, modulation globals. Declares `LFO3()` but **no definiti
 ### `PWM.ino`
 
 **Functions**
-- `setPWMOuts()` — Compute VCA/VCF CV from ADSR/LFO/cutoff/resonance/velocity/keytrack/drift; write hardware timer compare registers (resonance / cutoff / VCA). Empty `#ifdef ENABLE_SPI` block at end.
-  - **Called from:** `loop()` when `manualCalibrationFlag == false`.
-  - **When:** Hot path (play).
-- `setPWMOutsManualCalibration()` — Force wave mux / SQR levels for current cal stage; fixed resonance/cutoff/VCA; `waveSelectorMux.update` + `mcpUpdate`.
-  - **Called from:** `loop()` when `manualCalibrationFlag == true`.
-  - **When:** Manual-cal hot path.
 - `mcpUpdate()` — Push SQR1/SQR2/Sub levels to three MCP4728 chips.
-  - **Called from:** `apply_param_sqr1/sqr2/sub_level`; `setPWMOutsManualCalibration`.
-  - **When:** Param / manual-cal.
-- `linearInterpolation()` — Integer lerp.
-  - **Called from:** `setPWMOuts()` (VCA table map).
-  - **When:** Hot path.
+  - **Called from:** `apply_param_sqr1/sqr2/sub_level`; `update_CV_outs` / `update_CV_outs_manual_calibration`.
+  - **When:** Param / CV tick / manual-cal.
 
-### `formulas.h`
-
-Derived float formula globals. **No function definitions.**
-
-### `formulas.ino`
+### `cv_out.ino`
 
 **Functions**
-- `formula_update(byte)` — Switch: keytrack / ADSR2→VCF / LFO→VCF / PWM / VCA / DCO detune formula scalars.
-  - **Called from:** `setup()` (i=0..9); `input_handle_filter_block` (4,2); `apply_param_vcf_keytrack` (1); `apply_param_lfo1_to_vca` (7).
-  - **When:** Boot; filter block; params. Cases 10–11 have **no live callers**.
-- `controls_formula_update(byte)` — LFO speeds / depths via `expConverter*`.
-  - **Called from:** `setup()` (i=0..9); `apply_param_lfo1_speed` (1); `apply_param_lfo2_speed` (2).
-  - **When:** Boot; params. Case `31` has **no live callers**.
+- `update_CV_outs()` — Q15 VCA/VCF/reso math + matrix; write hardware timer compare registers.
+  - **Called from:** `loop()` when `manualCalibrationFlag == false`.
+  - **When:** Hot path (play).
+- `update_CV_outs_manual_calibration()` — Mute mux / park VCA / force SQR for current cal stage.
+  - **Called from:** `loop()` when `manualCalibrationFlag == true`.
+  - **When:** Manual-cal hot path.
+
+### `formulas.h` / `formulas.ino`
+
+Float-era formula scalars **retired**. Depths bake in `cv_out.ino` / `params.ino`.
 
 ### `waveSelector.h`
 
@@ -586,14 +567,14 @@ All detailed docs live under `docs/` (this file included). Root `README.md` is t
 | New ParamId | `params_def.h` → `apply_param_*` + `paramTable[]` in `params.ino` |
 | Serial2 (DCO) RX command | `serial_protocol.h` + handler in `Serial.ino` `mainSerial2Commands[]` |
 | Serial8 (Input) RX command | `serial_input_protocol.h` + handler in `Serial.ino` `inputSerial8Commands[]` |
-| Forward param to DCO | `serialSendParamByteToDCOFunction` / `serialSendParamToDCOFunction` from an `apply_param_*` |
-| VCA / VCF CV math | `PWM.ino` `setPWMOuts()` (+ formulas in `formulas.ino`) |
+| Forward param to DCO | `serialSendParamToDCO` from an `apply_param_*` |
+| VCA / VCF CV math | `cv_out.ino` `update_CV_outs()` (Q15 bakers) |
 | ADSR timing / curves | `ADSR.ino`; curves via params 48–51 |
 | LFO rate / shape | `LFO.ino` + `apply_param_lfo*_speed/waveform` |
 | Wave select (analog mux) | `waveSelector.ino` / `apply_param_*_status` |
 | SQR/Sub DAC levels | `mcpUpdate()` + `apply_param_sqr*_level` / `sub_level` |
 | Soft timer rates | `Timers_millis.ino` |
 | Hardware PWM pins | `Timers.h` + `init_timers()` |
-| Manual calibration CV path | `apply_param_manual_calibration_*` → `setPWMOutsManualCalibration` |
+| Manual calibration CV path | `apply_param_manual_calibration_*` → `update_CV_outs_manual_calibration` |
 | Loop profiling | Define `RUNNING_AVERAGE` → `print_mainboard_loop_timings` |
 | Preset load/save | Re-enable `flashData.ino` (currently fully commented) |

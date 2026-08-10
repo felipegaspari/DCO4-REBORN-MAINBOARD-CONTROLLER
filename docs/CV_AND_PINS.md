@@ -1,6 +1,6 @@
 # Mainboard CV and pin map
 
-Hardware mapping for **DCO4_Mainboard_Controller** (STM32). Signal routing comes from live `setPWMOuts()` / `mcpUpdate()` / `waveSelector` code and `Timers.h` pin macros.
+Hardware mapping for **DCO4_Mainboard_Controller** (STM32). Signal routing comes from live `update_CV_outs()` / `mcpUpdate()` / `waveSelector` code and `Timers.h` pin macros.
 
 ---
 

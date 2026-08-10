@@ -1,4 +1,3 @@
-// Boot: GPIO + RoxMux begin for dual 74HC595 wave enables.
 void init_waveSelector() {
   pinMode(PIN_LATCH, OUTPUT);
   pinMode(PIN_DATA, OUTPUT);
@@ -8,53 +7,39 @@ void init_waveSelector() {
   waveSelectorMux.allOff();
 }
 
-// Update one wave family (0–3) or all (4) on the 595 mux from status flags.
 void update_waveSelector(byte wave) {
-  //if (saw2Status == 0) {
-  //     Serial.println("entro al all on");
-  //waveSelectorMux.allOff();
   switch (wave) {
     case 0:
       for (int i = 0; i < 4; i++) {
-        waveSelectorMux.writePin(sawPins[i], !sawStatus);
+        waveSelectorMux.writePin(sawPins[i], !osc1SawEnable);
+        waveSelectorMux.writePin(saw2Pins[i], !osc2SawEnable);
       }
       break;
     case 1:
       for (int i = 0; i < 4; i++) {
-        waveSelectorMux.writePin(saw2Pins[i], !saw2Status);
+        waveSelectorMux.writePin(saw2Pins[i], !osc2SawEnable);
       }
       break;
     case 2:
       for (int i = 0; i < 4; i++) {
-        waveSelectorMux.writePin(triPins[i], !triStatus);
+        waveSelectorMux.writePin(triPins[i], !osc1TriEnable);
       }
       break;
     case 3:
       for (int i = 0; i < 4; i++) {
-        waveSelectorMux.writePin(sinePins[i], !sqr2Status);
+        waveSelectorMux.writePin(sinePins[i], !osc2PulseEnable);
       }
       break;
-    case 4:  // Update All
+    case 4:
       for (int i = 0; i < 4; i++) {
-        waveSelectorMux.writePin(sawPins[i], !sawStatus);
-        waveSelectorMux.writePin(saw2Pins[i], !saw2Status);
-        waveSelectorMux.writePin(triPins[i], !triStatus);
-        waveSelectorMux.writePin(sinePins[i], !sqr2Status);
+        waveSelectorMux.writePin(sawPins[i], !osc1SawEnable);
+        waveSelectorMux.writePin(saw2Pins[i], !osc2SawEnable);
+        waveSelectorMux.writePin(triPins[i], !osc1TriEnable);
+        waveSelectorMux.writePin(sinePins[i], !osc2PulseEnable);
       }
       break;
     default:
       break;
   }
-  // for (int i = 0; i < 16; i++) {
-  //  waveSelectorMux.writePin(i, saw2Status);
-  // }
-  //   }
-
-  //   if (saw2Status == 1) {
-  //        Serial.println("entro al all off");
-  //     waveSelectorMux.allOff();
-  //   }
-
-  //   Serial.println("antes del ultimo update");
   waveSelectorMux.update();
 }

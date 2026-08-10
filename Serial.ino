@@ -1,335 +1,199 @@
-inline void read_serial_1() {
-#ifdef ENABLE_SERIAL1
-  while (Serial1.available() > 0) {
-    char commandCharacter = Serial1.read();  //we use characters (letters) for controlling the switch-case
-    switch (commandCharacter) {
-        //     case 'r':
-        // {
-        //   byte presetNameBytes[8] = { 32, 32, 32, 32, 32, 32, 32, 32 };
-        //   while (Serial1.available() < 1) {}
-        //   presetNumber = Serial1.read();
-        //   while (Serial1.available() < 1) {}
+static SerialCommandTable mainSerial2Lut;
+static SerialParserContext mainSerial2Parser;
+static SerialCommandTable inputSerial8Lut;
+static SerialParserContext inputSerial8Parser;
 
-        //   Serial1.readBytes(presetNameBytes, 8);
-        //   for (int i = 0; i < 8; i++) {
-        //     presetName[i] = presetNameBytes[i];
-        //   }
-        //   break;
-        // }
-        // case 's':
-        //   {
-        //     while (Serial1.available() < 1) {}
-        //     serialSignal = Serial1.read();
-        //     switch(serialSignal) {
-        //       case 0:
-        //       break;
-        //       case 1:
-        //       break;
-        //       case 2:
-        //       break;
-        //       case 3:
-        //       break;
-        //       case 4:
-        //       // should get the number to save
-        //       break;
-        //       case 5:
-        //       writePreset(0);
-        //       break;
-        //     }
-
-        //     break;
-        //   }
-
-      default:
-        break;
-    }
-  }
+#ifdef MB_UART_RX_LOG
+const char* g_mb_uart_rx_port = "?";
 #endif
-}
 
-
-// -------------------------------
-// Serial2 parser (non-blocking, shared core)
-// -------------------------------
-//
-// This section wires the generic serial_parser.h core to the mainboard's
-// Serial2 link. The mainboard receives from the DCO:
-//
-//   'n' : NOTE ON
-//   'o' : NOTE OFF
-//   'p' : PARAM 16-bit (ParamId + int16)
-//   'w' : PARAM 8-bit  (ParamId + int8)
-//   'x' : PARAM 32-bit (ParamId + uint32)
-//
-// The parser core is shared; only the handlers below are mainboard-specific.
-
-// NOTE ON ('n') handler
 static void main_handle_note_on(char, const uint8_t* payload, uint8_t len) {
-  if (len != SERIAL_PAYLOAD_LEN_NOTE_ON) {
+  if (len != SERIAL_PAYLOAD_LEN_NOTE_ON) return;
+  uint8_t voice_n = payload[0];
+  if (voice_n >= NUM_VOICES) return;
+  velocity[voice_n] = payload[1];
+  midi_velocity[voice_n] = payload[1];
+  note[voice_n] = payload[2];
+  note_flags[voice_n] = payload[3];
+  noteEnd[voice_n] = 0;
+  if (payload[3] & NOTE_FLAG_PORTA_ONLY) {
+    noteStart[voice_n] = 0;
     return;
   }
-  uint8_t voice_n = payload[0];
-  uint8_t velo    = payload[1];
-  uint8_t noteVal = payload[2];
-
-  velocity[voice_n]  = velo;
-  note[voice_n]      = noteVal;
   noteStart[voice_n] = 1;
-  noteEnd[voice_n]   = 0;
+  if (payload[3] & NOTE_FLAG_RETRIGGER) {
+    mod_matrix_on_note_on();
+  }
 }
 
-// NOTE OFF ('o') handler
 static void main_handle_note_off(char, const uint8_t* payload, uint8_t len) {
-  if (len != SERIAL_PAYLOAD_LEN_NOTE_OFF) {
-    return;
-  }
+  if (len != SERIAL_PAYLOAD_LEN_NOTE_OFF) return;
   uint8_t voice_n = payload[0];
-  noteEnd[voice_n]   = 1;
+  if (voice_n >= NUM_VOICES) return;
+  noteEnd[voice_n] = 1;
   noteStart[voice_n] = 0;
 }
 
-// Shared parameter handlers: decode then call update_parameters(int32_t)
-static void main_handle_param16(char, const uint8_t* payload, uint8_t len) {
-  if (len != SERIAL_PAYLOAD_LEN_PARAM_16) {
-    return;
-  }
-  ParamFrame frame;
-  decode_param_p(payload, frame);
-  update_parameters(frame.id, frame.value);
+static void main_handle_expression(char, const uint8_t* payload, uint8_t len) {
+  if (len != SERIAL_PAYLOAD_LEN_EXPRESSION) return;
+  aftertouch = payload[0];
+  mod_wheel_in = payload[1];
+  midi_pitch_bend = decode_u16_le(payload + 2);
+  mod_matrix_set_aftertouch(payload[0]);
+  mod_matrix_set_mod_wheel(payload[1]);
 }
 
-static void main_handle_param8(char, const uint8_t* payload, uint8_t len) {
-  if (len != SERIAL_PAYLOAD_LEN_PARAM_8) {
-    return;
-  }
+static void main_handle_param16(char, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_PARAM_16) return;
   ParamFrame frame;
-  decode_param_w(payload, frame);
-  update_parameters(frame.id, frame.value);
+  decode_param_p(payload, frame);
+  update_parameters(frame.id, (int16_t)frame.value);
+  if (frame.id != PARAM_DEBUG_COMMAND) {
+    serialSendParam16ToInput(frame.id, (int16_t)frame.value);
+  }
 }
 
 static void main_handle_param32(char, const uint8_t* payload, uint8_t len) {
-  if (len != SERIAL_PAYLOAD_LEN_PARAM_32) {
-    return;
-  }
+  if (len != INPUT_SERIAL_LEN_PARAM_32) return;
   ParamFrame frame;
   decode_param_x(payload, frame);
-  // Debug: trace incoming 32-bit params from DCO, especially manual
-  // calibration offsets (155) so we can follow the batch through.
-  // if (frame.id == (uint8_t)PARAM_MANUAL_CALIBRATION_OFFSET_FROM_DCO) {
-  //   Serial.print("[MB] RX PARAM32 from DCO id=155 raw=0x");
-  //   Serial.println((uint32_t)frame.value, HEX);
-  // }
-  update_parameters(frame.id, frame.value);
-}
-
-// Command table for the mainboard's Serial2 link.
-static const SerialCommandDef mainSerial2Commands[] = {
-  { SERIAL_CMD_NOTE_ON,   SERIAL_PAYLOAD_LEN_NOTE_ON,   main_handle_note_on   },
-  { SERIAL_CMD_NOTE_OFF,  SERIAL_PAYLOAD_LEN_NOTE_OFF,  main_handle_note_off  },
-  { SERIAL_CMD_PARAM_16,  SERIAL_PAYLOAD_LEN_PARAM_16,  main_handle_param16   },
-  { SERIAL_CMD_PARAM_8,   SERIAL_PAYLOAD_LEN_PARAM_8,   main_handle_param8    },
-  { SERIAL_CMD_PARAM_32,  SERIAL_PAYLOAD_LEN_PARAM_32,  main_handle_param32   },
-};
-
-// Parser context for the mainboard's Serial2 link.
-static SerialParserContext mainSerial2Parser = {
-  SERIAL_WAIT_FOR_CMD,
-  0,
-  nullptr,
-  {0},
-  0,
-  0,
-  0
-};
-
-// Mainboard's Serial2 read loop (replace older parser's read function).
-inline void read_serial_2() {
-#ifdef ENABLE_SERIAL2
-  // First, expire any stale partial frame (only if we're in a frame).
-  if (mainSerial2Parser.state == SERIAL_READ_PAYLOAD) {
-    uint32_t now = micros();
-    serial_parser_check_timeout(mainSerial2Parser, now);
-  }
-
-  // Then, consume all available bytes without blocking.
-  if (Serial2.available() > 0) {
-    uint32_t now = micros();  // one timestamp per batch is enough
-    while (Serial2.available() > 0) {
-      uint8_t b = Serial2.read();
-      serial_parser_process_byte(
-        mainSerial2Parser,
-        mainSerial2Commands,
-        sizeof(mainSerial2Commands) / sizeof(mainSerial2Commands[0]),
-        b,
-        now
-      );
+  if (frame.id == PARAM_GAP_FROM_DCO ||
+      frame.id == PARAM_MANUAL_CALIBRATION_OFFSET_FROM_DCO) {
+    update_parameters(frame.id, (int16_t)frame.value);
+    if (frame.id == PARAM_GAP_FROM_DCO) {
+      serialSendParam32ToInput(PARAM_GAP_FROM_DCO, (uint32_t)frame.value);
+      serialSendParam32ToScreen(PARAM_GAP_FROM_DCO, (uint32_t)frame.value);
+    } else {
+      serialSendParam32ToInput(PARAM_MANUAL_CALIBRATION_OFFSET_FROM_DCO, (uint32_t)frame.value);
     }
   }
+}
+
+static void input_handle_adsr1(char, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) return;
+  uint16_t dirty = 0, v;
+  v = decode_u16_le(payload + 0);
+  if (v != ADSR_VCA_attack)  { ADSR_VCA_attack = v; dirty |= ADSR_DIRTY_VCA_A; }
+  v = decode_u16_le(payload + 2);
+  if (v != ADSR_VCA_decay)   { ADSR_VCA_decay = v; dirty |= ADSR_DIRTY_VCA_D; }
+  v = decode_u16_le(payload + 4);
+  if (v != ADSR_VCA_sustain) { ADSR_VCA_sustain = v; dirty |= ADSR_DIRTY_VCA_S; }
+  v = decode_u16_le(payload + 6);
+  if (v != ADSR_VCA_release) { ADSR_VCA_release = v; dirty |= ADSR_DIRTY_VCA_R; }
+  if (dirty) mark_adsr_params_dirty(dirty);
+}
+
+static void input_handle_adsr2(char, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) return;
+  uint16_t dirty = 0, v;
+  v = decode_u16_le(payload + 0);
+  if (v != ADSR_VCF_attack)  { ADSR_VCF_attack = v; dirty |= ADSR_DIRTY_VCF_A; }
+  v = decode_u16_le(payload + 2);
+  if (v != ADSR_VCF_decay)   { ADSR_VCF_decay = v; dirty |= ADSR_DIRTY_VCF_D; }
+  v = decode_u16_le(payload + 4);
+  if (v != ADSR_VCF_sustain) { ADSR_VCF_sustain = v; dirty |= ADSR_DIRTY_VCF_S; }
+  v = decode_u16_le(payload + 6);
+  if (v != ADSR_VCF_release) { ADSR_VCF_release = v; dirty |= ADSR_DIRTY_VCF_R; }
+  if (dirty) mark_adsr_params_dirty(dirty);
+}
+
+static void input_handle_adsr3(char, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) return;
+  uint16_t dirty = 0, v;
+  v = decode_u16_le(payload + 0);
+  if (v != ADSR1_attack)  { ADSR1_attack = v; dirty |= ADSR_DIRTY_DCO_A; }
+  v = decode_u16_le(payload + 2);
+  if (v != ADSR1_decay)   { ADSR1_decay = v; dirty |= ADSR_DIRTY_DCO_D; }
+  v = decode_u16_le(payload + 4);
+  if (v != ADSR1_sustain) { ADSR1_sustain = v; dirty |= ADSR_DIRTY_DCO_S; }
+  v = decode_u16_le(payload + 6);
+  if (v != ADSR1_release) { ADSR1_release = v; dirty |= ADSR_DIRTY_DCO_R; }
+  if (dirty) mark_adsr_params_dirty(dirty);
+}
+
+static void input_handle_filter_block(char, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_FILTER_BLOCK) return;
+  CUTOFF     = decode_u16_le(payload + 0);
+  RESONANCE  = decode_u16_le(payload + 2);
+  ADSR2toVCF = decode_i16_le(payload + 4);
+  LFO2toVCF  = decode_u16_le(payload + 6);
+  cv_bake_adsr2_to_vcf_scale();
+  cv_bake_lfo2_to_vcf_scale();
+}
+
+static void input_handle_param16(char, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_PARAM_16) return;
+  ParamFrame frame;
+  decode_param_p(payload, frame);
+  update_parameters(frame.id, (int16_t)frame.value);
+}
+
+static void input_handle_preset_name(char, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_PRESET_NAME) return;
+  for (uint8_t i = 0; i < 8; i++) presetName[i] = payload[i];
+}
+
+static const SerialCommandDef mainSerial2Commands[] = {
+  { SERIAL_CMD_NOTE_ON,     SERIAL_PAYLOAD_LEN_NOTE_ON,     main_handle_note_on },
+  { SERIAL_CMD_NOTE_OFF,    SERIAL_PAYLOAD_LEN_NOTE_OFF,    main_handle_note_off },
+  { SERIAL_CMD_EXPRESSION,  SERIAL_PAYLOAD_LEN_EXPRESSION,  main_handle_expression },
+  { SERIAL_CMD_PARAM_16,    INPUT_SERIAL_LEN_PARAM_16,      main_handle_param16 },
+  { SERIAL_CMD_PARAM_32,    INPUT_SERIAL_LEN_PARAM_32,      main_handle_param32 },
+  // USB/MIDI analog mirror from DCO (same handlers as Input Serial8).
+  { INPUT_CMD_ADSR1_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,    input_handle_adsr1 },
+  { INPUT_CMD_ADSR2_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,    input_handle_adsr2 },
+  { INPUT_CMD_FILTER_BLOCK, INPUT_SERIAL_LEN_FILTER_BLOCK,  input_handle_filter_block },
+};
+
+static const SerialCommandDef inputSerial8Commands[] = {
+  { INPUT_CMD_ADSR1_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,   input_handle_adsr1 },
+  { INPUT_CMD_ADSR2_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,   input_handle_adsr2 },
+  { INPUT_CMD_ADSR3_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,   input_handle_adsr3 },
+  { INPUT_CMD_FILTER_BLOCK, INPUT_SERIAL_LEN_FILTER_BLOCK, input_handle_filter_block },
+  { INPUT_CMD_PARAM_16,     INPUT_SERIAL_LEN_PARAM_16,     input_handle_param16 },
+  { INPUT_CMD_PRESET_NAME,  INPUT_SERIAL_LEN_PRESET_NAME,  input_handle_preset_name },
+};
+
+void init_serial_parsers() {
+  serial_parser_reset(mainSerial2Parser);
+  serial_parser_reset(inputSerial8Parser);
+  serial_command_table_init(mainSerial2Lut, mainSerial2Commands,
+                            sizeof(mainSerial2Commands) / sizeof(mainSerial2Commands[0]));
+  serial_command_table_init(inputSerial8Lut, inputSerial8Commands,
+                            sizeof(inputSerial8Commands) / sizeof(inputSerial8Commands[0]));
+}
+
+inline void read_serial_1() {
+#ifdef ENABLE_SERIAL1
+#ifdef MB_UART_RX_LOG
+  int n = Serial1.available();
+  if (n > 0) {
+#ifdef ENABLE_SERIAL
+    Serial.print("mb s1 rx ");
+    Serial.println(n);
+#endif
+    while (Serial1.available() > 0) (void)Serial1.read();
+  }
+#else
+  while (Serial1.available() > 0) (void)Serial1.read();
+#endif
 #endif
 }
 
-// -------------------------------
-// Serial8 parser (non-blocking, shared core)
-// -------------------------------
-//
-// This section wires the generic serial_parser.h core to the mainboard's
-// Serial8 link. The input board sends:
-//
-//   'a' : ADSR1 block (8 bytes)
-//   'b' : ADSR2 block (8 bytes)
-//   'c' : ADSR3 block (8 bytes)
-//   'd' : filter block (8 bytes)
-//   'e' : ADSR1->VCA amount (2 bytes)
-//   'f' : PWM value (2 bytes)
-//   'p' : PARAM 16-bit (ParamId + int16 + finish)
-//   'w' : PARAM 8-bit  (ParamId + int8  + finish)
-//   'q' : preset name (8 chars + finish byte)
-//
-// The parser core is shared; only the handlers below are mainboard-specific.
-
-// ADSR1 block ('a'): 8 bytes
-static void input_handle_adsr1(char, const uint8_t* payload, uint8_t len) {
-  if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) {
-    return;
-  }
-  // MAP/CONSTRAIN is done on input board; here we just apply the values.
-  ADSR1_attack  = word(payload[0], payload[1]);
-  ADSR1_decay   = word(payload[2], payload[3]);
-  ADSR1_sustain = word(payload[4], payload[5]);
-  ADSR1_release = word(payload[6], payload[7]);
+inline void read_serial_2() {
+#ifdef ENABLE_SERIAL2
+#ifdef MB_UART_RX_LOG
+  g_mb_uart_rx_port = "s2";
+#endif
+  serial_parser_drain(mainSerial2Parser, mainSerial2Lut, Serial2, SERIAL_DRAIN_BYTE_BUDGET);
+#endif
 }
-
-// ADSR2 block ('b'): 8 bytes
-static void input_handle_adsr2(char, const uint8_t* payload, uint8_t len) {
-  if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) {
-    return;
-  }
-  ADSR2_attack  = word(payload[0], payload[1]);
-  ADSR2_decay   = word(payload[2], payload[3]);
-  ADSR2_sustain = word(payload[4], payload[5]);
-  ADSR2_release = word(payload[6], payload[7]);
-}
-
-// ADSR3 block ('c'): 8 bytes
-static void input_handle_adsr3(char, const uint8_t* payload, uint8_t len) {
-  if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) {
-    return;
-  }
-  ADSR3_attack  = word(payload[0], payload[1]);
-  ADSR3_decay   = word(payload[2], payload[3]);
-  ADSR3_sustain = word(payload[4], payload[5]);
-  ADSR3_release = word(payload[6], payload[7]);
-
-  serialSendADSR3ControlValuesFlag = true;
-}
-
-// Filter block ('d'): 8 bytes
-static void input_handle_filter_block(char, const uint8_t* payload, uint8_t len) {
-  if (len != INPUT_SERIAL_LEN_FILTER_BLOCK) {
-    return;
-  }
-  CUTOFF     = word(payload[0], payload[1]);
-  RESONANCE  = word(payload[2], payload[3]);
-  ADSR2toVCF = word(payload[4], payload[5]);
-  LFO2toVCF  = word(payload[6], payload[7]);
-  formula_update(4);
-  formula_update(2);
-}
-
-// ADSR1->VCA amount ('e'): 2 bytes
-static void input_handle_adsr1_to_vca(char, const uint8_t* payload, uint8_t len) {
-  if (len != INPUT_SERIAL_LEN_ADSR1_TO_VCA) {
-    return;
-  }
-  ADSR1toVCA = word(payload[0], payload[1]);
-}
-
-// PWM value ('f'): 2 bytes
-static void input_handle_pw(char, const uint8_t* payload, uint8_t len) {
-  if (len != INPUT_SERIAL_LEN_PW_VALUE) {
-    return;
-  }
-  PW = word(payload[0], payload[1]);
-}
-
-// PARAM 16-bit from input board ('p'):
-// payload: [paramNumber, hi, lo, finish] (finish is ignored here).
-static void input_handle_param16(char, const uint8_t* payload, uint8_t len) {
-  if (len != INPUT_SERIAL_LEN_PARAM_16) {
-    return;
-  }
-  ParamFrame frame;
-  decode_param_p(payload, frame);
-  update_parameters(frame.id, frame.value);
-}
-
-// PARAM 8-bit from input board ('w'):
-// payload: [paramNumber, int8 value, finish] (finish is ignored).
-static void input_handle_param8(char, const uint8_t* payload, uint8_t len) {
-  if (len != INPUT_SERIAL_LEN_PARAM_8) {
-    return;
-  }
-  ParamFrame frame;
-  decode_param_w(payload, frame);
-  update_parameters(frame.id, frame.value);
-}
-
-// Preset name ('q'):
-// payload: [8 chars, finishByte]
-static void input_handle_preset_name(char, const uint8_t* payload, uint8_t len) {
-  if (len != INPUT_SERIAL_LEN_PRESET_NAME) {
-    return;
-  }
-  for (int i = 0; i < 8; ++i) {
-    presetName[i] = payload[i];
-  }
-  // payload[8] is the finish byte; we don't need its value here.
-}
-
-// Command table for the mainboard's Serial8 link (input board).
-static const SerialCommandDef inputSerial8Commands[] = {
-  { INPUT_CMD_ADSR1_BLOCK,   INPUT_SERIAL_LEN_ADSR_BLOCK,   input_handle_adsr1          },
-  { INPUT_CMD_ADSR2_BLOCK,   INPUT_SERIAL_LEN_ADSR_BLOCK,   input_handle_adsr2          },
-  { INPUT_CMD_ADSR3_BLOCK,   INPUT_SERIAL_LEN_ADSR_BLOCK,   input_handle_adsr3          },
-  { INPUT_CMD_FILTER_BLOCK,  INPUT_SERIAL_LEN_FILTER_BLOCK, input_handle_filter_block   },
-  { INPUT_CMD_ADSR1_TO_VCA,  INPUT_SERIAL_LEN_ADSR1_TO_VCA, input_handle_adsr1_to_vca   },
-  { INPUT_CMD_PW_VALUE,      INPUT_SERIAL_LEN_PW_VALUE,     input_handle_pw             },
-  { INPUT_CMD_PARAM_16,      INPUT_SERIAL_LEN_PARAM_16,     input_handle_param16        },
-  { INPUT_CMD_PARAM_8,       INPUT_SERIAL_LEN_PARAM_8,      input_handle_param8         },
-  { INPUT_CMD_PRESET_NAME,   INPUT_SERIAL_LEN_PRESET_NAME,  input_handle_preset_name    },
-};
-
-static SerialParserContext inputSerial8Parser = {
-  SERIAL_WAIT_FOR_CMD,
-  0,
-  nullptr,
-  {0},
-  0,
-  0,
-  0
-};
 
 inline void read_serial_8() {
 #ifdef ENABLE_SERIAL8
-  // First, expire any stale partial frame (only if we're in a frame).
-  if (inputSerial8Parser.state == SERIAL_READ_PAYLOAD) {
-    uint32_t now = micros();
-    serial_parser_check_timeout(inputSerial8Parser, now);
-  }
-
-  // Then, consume all available bytes without blocking.
-  if (Serial8.available() > 0) {
-    uint32_t now = micros();  // one timestamp per batch is enough
-    while (Serial8.available() > 0) {
-      uint8_t b = Serial8.read();
-      serial_parser_process_byte(
-        inputSerial8Parser,
-        inputSerial8Commands,
-        sizeof(inputSerial8Commands) / sizeof(inputSerial8Commands[0]),
-        b,
-        now
-      );
-    }
-  }
+#ifdef MB_UART_RX_LOG
+  g_mb_uart_rx_port = "s8";
+#endif
+  serial_parser_drain(inputSerial8Parser, inputSerial8Lut, Serial8, SERIAL_DRAIN_BYTE_BUDGET);
 #endif
 }
