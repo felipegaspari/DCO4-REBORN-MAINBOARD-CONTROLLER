@@ -82,13 +82,14 @@ arduino-cli compile --libraries ./_build_libs .
 
 Main sketch: `MAINBOARD-CONTROLLER.ino`.
 
-### Libraries (`_build_libs`)
+### Libraries (`_build_libs` and `libraries/`)
 
 | Library | Path | Notes |
 |---------|------|--------|
+| `DCO-PROTOCOL` | `libraries/DCO-PROTOCOL` and `_build_libs/DCO-PROTOCOL` → `../../DCO-PROTOCOL` | Shared `params_def.h` / serial headers. **`libraries/`** is what Arduino IDE picks up; **`_build_libs/`** is for `arduino-cli --libraries ./_build_libs`. |
 | `ADSR_Bezier` | `_build_libs/ADSR_Bezier` → `../../ADSR_Bezier` | Symlink to monorepo root; track **`Q15`**. |
 | `mo-lfo` | `_build_libs/mo-lfo` → `../../mo-lfo` | Symlink to monorepo root; track **`q15`**. `LFO.ino` `#include`s `mo-lfo.cpp` so Arduino IDE links it. |
-| `RoxMux_fela` | `_build_libs/RoxMux_fela` → `../../RoxMux_FELA` | Symlink to monorepo root; `waveSelector.h` includes it as `"_build_libs/RoxMux_fela/src/RoxMux_fela.h"`. |
+| `RoxMux_fela` | `libraries/RoxMux_fela` and `_build_libs/RoxMux_fela` → `../../RoxMux_FELA` | FELA fork. **`libraries/`** for Arduino IDE (`#include <RoxMux_fela.h>`); **`_build_libs/`** for `arduino-cli --libraries`. |
 
 Sketchbook / core libs (not under `_build_libs`): `MCP4728_multiaddress`, `Wire`.
 
@@ -112,7 +113,7 @@ Sketchbook / core libs (not under `_build_libs`): `MCP4728_multiaddress`, `Wire`
 ## Contributing / hacking
 
 - Start with [`docs/MAINBOARD_REINTEGRATION.md`](docs/MAINBOARD_REINTEGRATION.md), [`docs/PRESET_RELAY.md`](docs/PRESET_RELAY.md) and [`docs/REFERENCE_AI.md`](docs/REFERENCE_AI.md).
-- `params_def.h` and `serial_input_protocol.h` are **shared supersets**, byte-identical across every board in both projects; the master copies live in `DCO3-MONOSYNTH/DCO/`. Edit there, copy out, and never renumber an existing ID. Each board implements only the subset it cares about.
+- `params_def.h` and `serial_input_protocol.h` live in the shared [`DCO-PROTOCOL`](../DCO-PROTOCOL/README.md) library. Edit there once; never renumber an existing ID. Each board implements only the subset it cares about.
 - Route new controls through `params.ino` + slim LE headers — no BE `'e'`/`'f'`/`'s'` streams.
 - A new preset/DCO-bound command byte must be registered in this board's relay tables (`inputSerial8Commands[]` / `mainSerial2Commands[]`, or `paramTable[]` for a `'p'` id) or it is silently dropped between Input and the DCO. See [`docs/PRESET_RELAY.md`](docs/PRESET_RELAY.md).
 - When changing CV math, keep [`docs/CV_AND_PINS.md`](docs/CV_AND_PINS.md) and [`docs/MODULATION_PIPELINE.md`](docs/MODULATION_PIPELINE.md) in sync.
