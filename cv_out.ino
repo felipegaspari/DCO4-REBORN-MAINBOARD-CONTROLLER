@@ -9,7 +9,7 @@ static constexpr int32_t CV_LFO_Q15_PEAK_DIV = CV_PANEL_DEPTH_FULL * 2;
 static constexpr int CV_VCA_COMP_DEFAULT = 100;
 static constexpr int CV_RESO_COMP_MAX_RESONANCE = 2300;
 static constexpr int CV_RESO_COMP_MIN_RESONANCE = 50;
-static constexpr int CV_RESO_COMP_MAX_VCA = 315;
+static constexpr int CV_RESO_COMP_MAX_VCA = 316;
 static constexpr int CV_RESO_COMP_SLOPE_Q8 = 36;
 
 static inline uint16_t lerp_0_4095(uint16_t value, uint16_t y0, uint16_t y1) {
@@ -94,11 +94,9 @@ inline void update_CV_outs() {
   if (timer1msFlag) {
     if (RESONANCEAmpCompensation) {
       const int resonance_in = min((int)RESONANCE, CV_RESO_COMP_MAX_RESONANCE);
-      VCAResonanceCompensation =
-        (resonance_in >= CV_RESO_COMP_MIN_RESONANCE)
-          ? (int16_t)(CV_RESO_COMP_MAX_VCA -
-                      (((resonance_in - CV_RESO_COMP_MIN_RESONANCE) * CV_RESO_COMP_SLOPE_Q8) >> 8))
-          : (int16_t)CV_RESO_COMP_MAX_VCA;
+      const int32_t comp = CV_RESO_COMP_MAX_VCA -
+        (((resonance_in - CV_RESO_COMP_MIN_RESONANCE) * CV_RESO_COMP_SLOPE_Q8) >> 8);
+      VCAResonanceCompensation = (int16_t)(comp > 0 ? comp : 0);
     } else {
       VCAResonanceCompensation = CV_VCA_COMP_DEFAULT;
     }

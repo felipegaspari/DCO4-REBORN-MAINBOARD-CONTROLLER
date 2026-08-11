@@ -209,6 +209,15 @@ static void apply_param_manual_calibration_offset_from_dco(int16_t /*v*/) {}
 static void apply_param_manual_calibration_store(int16_t /*v*/) {
   forward_dco(PARAM_MANUAL_CALIBRATION_STORE, 1);
 }
+// 170–173 are pure commands for the DCO's preset store / calibration dump. The
+// Mainboard holds no preset state of its own, so it just passes them through;
+// the DCO answers a load by mirroring the recalled params back as 'p'/'a'-'d',
+// which reach Input through the normal mirror path.
+static void apply_param_preset_save(int16_t v) { forward_dco(PARAM_PRESET_SAVE, v); }
+static void apply_param_preset_load(int16_t v) { forward_dco(PARAM_PRESET_LOAD, v); }
+static void apply_param_preset_dump(int16_t v) { forward_dco(PARAM_PRESET_DUMP, v); }
+static void apply_param_cal_dump(int16_t v)    { forward_dco(PARAM_CAL_DUMP, v); }
+
 static void apply_param_debug_command(int16_t v) {
   switch (v) {
     case 40:
@@ -327,6 +336,10 @@ static const ParamDescriptorT<int16_t> paramTable[] = {
   { PARAM_GAP_FROM_DCO, apply_param_gap_from_dco },
   { PARAM_MANUAL_CALIBRATION_OFFSET_FROM_DCO, apply_param_manual_calibration_offset_from_dco },
   { PARAM_MANUAL_CALIBRATION_STORE, apply_param_manual_calibration_store },
+  { PARAM_PRESET_SAVE, apply_param_preset_save },
+  { PARAM_PRESET_LOAD, apply_param_preset_load },
+  { PARAM_PRESET_DUMP, apply_param_preset_dump },
+  { PARAM_CAL_DUMP, apply_param_cal_dump },
   { PARAM_DEBUG_COMMAND, apply_param_debug_command },
 };
 

@@ -6,8 +6,11 @@
 #define ENABLE_SERIAL2
 #define ENABLE_SERIAL8
 
+// 17 = the 'O' preset-directory entry ([slot:u8][name:16]) the Mainboard relays
+// DCO → Input; everything else it handles tops out at 16 ('m'/'t'). Must be set
+// before serial_frame.h locks its default.
 #ifndef SERIAL_INNER_MAX_PAYLOAD
-#define SERIAL_INNER_MAX_PAYLOAD 16
+#define SERIAL_INNER_MAX_PAYLOAD 17
 #endif
 
 #include "serial_param_protocol.h"

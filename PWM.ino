@@ -1,4 +1,4 @@
-static constexpr uint32_t MCP_RING_US = 200;
+static constexpr uint32_t MCP_RING_US = 120;
 static constexpr uint8_t MCP_ADDR7[3] = { 0x63, 0x64, 0x65 };
 
 inline void mcpUpdate(uint16_t l1, uint16_t l2, uint16_t ls, bool stagger) {

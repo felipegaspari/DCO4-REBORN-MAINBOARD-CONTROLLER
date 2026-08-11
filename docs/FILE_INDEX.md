@@ -2,10 +2,18 @@
 
 Purpose of **every file**, and for each source function: **what it does**, **who calls it**, and **when**.
 
+> `params_def.h`, `param_router.h`, `serial_input_protocol.h`,
+> `serial_param_protocol.h`, `serial_frame.h` and `serial_parser.h` are no longer
+> files in this folder. They come from the shared
+> [`DCO-PROTOCOL`](../../DCO-PROTOCOL/README.md) library, symlinked in as
+> `_build_libs/DCO-PROTOCOL`. Their entries below still describe the code this
+> board compiles; edit them in the library, once, for every board.
+
 - Deep narrative: [`REFERENCE_AI.md`](REFERENCE_AI.md)
 - CV / pin map: [`CV_AND_PINS.md`](CV_AND_PINS.md)
 - Modulation math: [`MODULATION_PIPELINE.md`](MODULATION_PIPELINE.md)
 - Serial / ParamId how-to: [`README_serial_and_params.md`](README_serial_and_params.md)
+- Preset relay contract: [`PRESET_RELAY.md`](PRESET_RELAY.md)
 - Four-board topology: [`SYSTEM_OVERVIEW.md`](SYSTEM_OVERVIEW.md) → DCO `docs/SYSTEM_OVERVIEW.md`
 - Reintegration: [`MAINBOARD_REINTEGRATION.md`](MAINBOARD_REINTEGRATION.md)
 - Repo entry / doc index: [`../README.md`](../README.md)
@@ -13,7 +21,7 @@ Purpose of **every file**, and for each source function: **what it does**, **who
 Headers with no bodies are marked **no function definitions**.  
 **Dead** = no live callers. **Unreachable** = call site exists but cannot run as currently gated. **`#ifdef` gated** = compiled only when the flag is set. **commented-out** = body fully commented (not compiled).
 
-MCU: **STM32** (single Arduino core). Analog/modulation hub: Q15 ADSRs/LFOs/matrix, filter/VCA CVs (hardware timers + MCP4728), wave select, slim LE param routing between DCO / Input / Screen.
+MCU: **STM32** (single Arduino core). Analog/modulation hub: Q15 ADSRs/LFOs/matrix, filter/VCA CVs (hardware timers + MCP4728), wave select, slim LE param routing between DCO / Input / Screen, and the per-command-byte preset relay carrying Input ↔ DCO traffic.
 
 ---
 
@@ -47,9 +55,13 @@ flowchart TD
   pwmBranch -->|true| pwmMan["update_CV_outs_manual_calibration"]
 
   rs2 --> handlers2["main_handle_* → notes / expression / update_parameters"]
-  rs18 --> handlers8["input_handle_* → ADSR/filter / update_parameters"]
-  handlers2 --> upd["update_parameters → param_router_apply → apply_param_*"]
+  rs18 --> handlers8["input8_* / input_handle_* → ADSR/filter / update_parameters"]
+  handlers2 --> upd["update_parameters → param_router_apply_jump → apply_param_*"]
   handlers8 --> upd
+  handlers2 --> relay8["relay to Input (Serial8): 'O' 'L' 'd'"]
+  handlers8 --> relay2["relay to DCO (Serial2): 'a'-'d' 'q' 'N'"]
+  upd --> relay2p["forward_dco 'p' (incl. preset 170-173)"]
+  relay2p --> relay2
 ```
 
 | Context tag | Meaning |
@@ -84,9 +96,9 @@ Main sketch: single-core `setup`/`loop`, UART bring-up, soft-timer scheduling, A
   - **When:** Forever.
 - `print_mainboard_loop_timings()` — Print RunningAverage loop section averages to USB Serial.
   - **Called from:** `loop()` when `RUNNING_AVERAGE` **and** `timer500msFlag`.
-  - **When:** `#ifdef RUNNING_AVERAGE` only (~2 Hz). Currently **gated off** (`RUNNING_AVERAGE` commented).
+  - **When:** `#ifdef RUNNING_AVERAGE` only (~2 Hz). Currently **enabled** in `MAINBOARD-CONTROLLER.ino`.
 
-**Key macros / flags:** `ENABLE_SD` (on); `ENABLE_SPI` (commented); `RUNNING_AVERAGE` (commented); Serial enables live in `Serial.h`.
+**Key macros / flags:** `ENABLE_SD` (on); `ENABLE_SPI` (commented); `RUNNING_AVERAGE` (enabled); Serial enables live in `Serial.h`.
 
 ### `include_all.h`
 
@@ -98,11 +110,11 @@ Arduino build opts: larger Serial RX/TX buffers. **No function definitions.**
 
 ### `params.h`
 
-Shared note/param globals (wave status, pot-manual flags, calibration flags, encoder-side vals, etc.). **No function definitions.**
+Shared note/param globals (wave status, pot-manual flags, calibration flags, encoder-side vals, etc.), plus `presetName[16]` — a display/echo copy of the last `'q'` frame, not preset state. **No function definitions.**
 
 ### `params_def.h`
 
-Canonical `enum ParamId`. **No function definitions.**
+Canonical `enum ParamId` superset, byte-identical on every board of both projects (master: `DCO3-MONOSYNTH/DCO/params_def.h`). This board implements a subset; ids 170–173 are DCO preset / cal commands it only forwards. **No function definitions.**
 
 ---
 
@@ -110,14 +122,14 @@ Canonical `enum ParamId`. **No function definitions.**
 
 ### `Serial.h`
 
-UART instances + enable macros (`ENABLE_SERIAL`, `ENABLE_SERIAL1`, `ENABLE_SERIAL2`, `ENABLE_SERIAL8`), finish byte, send flags, DCO param queues (`serialSendParamByteToDCOBuf`, `serialSendParamToDCOBuf`). **No function definitions.**
+UART instances + enable macros (`ENABLE_SERIAL`, `ENABLE_SERIAL1`, `ENABLE_SERIAL2`, `ENABLE_SERIAL8`), RX/TX pin defines, TX prototypes, and `SERIAL_INNER_MAX_PAYLOAD 17` — set before `serial_frame.h` is included, sized by the relayed `'O'` frame. **No function definitions.**
 
 ### `Serial.ino`
 
-Inbound parsers: Serial1 (stub), Serial2 (DCO), Serial8 (Input).
+Inbound parsers: Serial1 (stub), Serial2 (DCO), Serial8 (Input). Also holds both relay tables — `mainSerial2Commands[]` (DCO → Input) and `inputSerial8Commands[]` (Input → DCO). A command byte absent from them is dropped silently; see [`PRESET_RELAY.md`](PRESET_RELAY.md).
 
 **Functions**
-- `read_serial_1()` — Drain Serial1; switch has only `default` (legacy preset cases commented).
+- `read_serial_1()` — Read and discard whatever Screen sends; no parser on this port.
   - **Called from:** `loop()` when `timer223microsFlag`.
   - **When:** Soft timer; body under `#ifdef ENABLE_SERIAL1` (enabled).
 - `main_handle_note_on()` — Apply voice velocity/note; set `noteStart`/`noteEnd`.
@@ -126,132 +138,167 @@ Inbound parsers: Serial1 (stub), Serial2 (DCO), Serial8 (Input).
 - `main_handle_note_off()` — Set `noteEnd` / clear `noteStart`.
   - **Called from:** Serial2 parser.
   - **When:** DCO `'o'` frame.
-- `main_handle_param16()` — `decode_param_p` → `update_parameters`.
+- `main_handle_param16()` — `decode_param_p` → `update_parameters`, then mirror to Input with `serialSendParam16ToInput` (every id except `PARAM_DEBUG_COMMAND`). This is the path a preset recall's persistable params take to the panel.
   - **Called from:** Serial2 parser.
   - **When:** DCO `'p'`.
-- `main_handle_param8()` — `decode_param_w` → `update_parameters`.
+- `main_handle_expression()` — Aftertouch / mod wheel / pitch bend into the mod matrix sources.
   - **Called from:** Serial2 parser.
-  - **When:** DCO `'w'`.
+  - **When:** DCO `'e'`.
 - `main_handle_param32()` — `decode_param_x` → `update_parameters`.
   - **Called from:** Serial2 parser.
   - **When:** DCO `'x'`.
-- `read_serial_2()` — Timeout + non-blocking Serial2 parser pump.
+- `read_serial_2()` — `serial_parser_drain` on Serial2, with a `mb_filter_forward_ring_drain()` either side.
   - **Called from:** `loop()` every iteration.
   - **When:** Every `loop`; body under `#ifdef ENABLE_SERIAL2`.
-- `input_handle_adsr1()` — Load ADSR1 A/D/S/R words.
-  - **Called from:** Serial8 parser; Serial2 parser (USB/MIDI mirror).
-  - **When:** Input `'a'` or DCO `'a'`.
-- `input_handle_adsr2()` — Load ADSR2 A/D/S/R.
-  - **Called from:** Serial8 parser; Serial2 parser (USB/MIDI mirror).
-  - **When:** Input `'b'` or DCO `'b'`.
+- `input_handle_adsr1()` — Load EnvVCA A/D/S/R words; `mark_adsr_params_dirty` on change.
+  - **Called from:** Serial2 parser (USB/MIDI mirror); `input8_handle_adsr1()`.
+  - **When:** DCO `'a'` or Input `'a'`.
+- `input_handle_adsr2()` — Load EnvVCF A/D/S/R.
+  - **Called from:** Serial2 parser (USB/MIDI mirror); `input8_handle_adsr2()`.
+  - **When:** DCO `'b'` or Input `'b'`.
 - `input_handle_adsr3()` — Load EnvDCO A/D/S/R.
-  - **Called from:** Serial8 parser.
+  - **Called from:** `input8_handle_adsr3()` only — `'c'` is **not** registered on Serial2.
   - **When:** Input `'c'`.
-- `input_handle_filter_block()` — CUTOFF / RESONANCE / ADSR2toVCF / LFO2toVCF; scale bake.
-  - **Called from:** Serial8 parser; Serial2 parser (USB/MIDI mirror).
-  - **When:** Input `'d'` or DCO `'d'`.
+- `input_handle_filter_block()` — CUTOFF / RESONANCE / ADSR2toVCF / LFO2toVCF; scale bake. Apply only, no forwarding.
+  - **Called from:** `main_handle_filter_block()` and `input8_handle_filter_block()`, never registered directly.
+  - **When:** DCO `'d'` or Input `'d'`.
+- `main_handle_filter_block()` — Apply via `input_handle_filter_block()`, then re-emit `'d'` on Serial8 so Input's pots follow a DCO-origin recall (parked in `mb_filter_forward_ring` when Serial8 is full).
+  - **Called from:** Serial2 parser (USB/MIDI mirror, preset recall).
+  - **When:** DCO `'d'` only — mirroring an Input-origin block would echo it back to its sender.
 - `input_handle_param16()` — `decode_param_p` → `update_parameters` (PW=210, ADSR1→VCA=222).
   - **Called from:** Serial8 parser.
   - **When:** Input `'p'`.
-- `input_handle_preset_name()` — Copy 8 chars into `presetName`.
+- `input_handle_preset_name()` — Copy 16 chars into `presetName[]` (display/echo only) **and** forward the `'q'` frame to the DCO, which needs the name staged before the `PARAM_PRESET_SAVE` that follows.
   - **Called from:** Serial8 parser.
   - **When:** Input `'q'`.
-- `read_serial_8()` — Timeout + non-blocking Serial8 parser pump.
-  - **Called from:** `loop()` when `timer223microsFlag`.
+- `input_handle_preset_dir_request()` — Relay `'N'` Input → DCO.
+  - **Called from:** Serial8 parser.
+  - **When:** Input asks for the preset directory (boot, browse-mode enter).
+- `main_handle_preset_dir_entry()` — Relay `'O'` `[slot][name:16]` DCO → Input.
+  - **Called from:** Serial2 parser.
+  - **When:** Each of the 256 directory entries the DCO pushes.
+- `main_handle_preset_loaded()` — Relay `'L'` `[slot]` DCO → Input.
+  - **Called from:** Serial2 parser.
+  - **When:** The DCO finished a load (boot recall, MIDI PC, `dco_control`, or Input).
+- `mb_forward_block_to_dco()` — `serial_frame_write` of one block frame on Serial2.
+  - **Called from:** the four `input8_*` wrappers.
+  - **When:** Any Input-origin `'a'`–`'d'`.
+- `input8_handle_adsr1()` / `input8_handle_adsr2()` / `input8_handle_adsr3()` / `input8_handle_filter_block()` — Call the plain local handler, then shadow the frame on the DCO so its preset records hold current envelope/filter values.
+  - **Called from:** Serial8 parser (these, not the plain handlers, are what `inputSerial8Commands[]` registers).
+  - **When:** Input `'a'` / `'b'` / `'c'` / `'d'`.
+- `mb_filter_forward_ring_enqueue()` / `mb_filter_forward_ring_drain()` — 8-deep backlog for `'d'` frames when Serial8 has no TX room.
+  - **Called from:** `main_handle_filter_block()`; `read_serial_2()` (drain, before and after the parse).
+  - **When:** Serial8 congestion only.
+- `read_serial_8()` — `serial_parser_drain` on Serial8.
+  - **Called from:** `loop()` when `timer223microsFlag`, or opportunistically when `Serial8.available()`.
   - **When:** Soft timer; body under `#ifdef ENABLE_SERIAL8`.
+- `init_serial_parsers()` — Reset both contexts and build the two 256-entry LUTs from `mainSerial2Commands[]` / `inputSerial8Commands[]`.
+  - **Called from:** `setup()`.
+  - **When:** Boot. **Adding a relayed command means adding a row to one of those two arrays.**
 
 ### `Serial2.ino`
 
 Outbound frames to DCO / Screen / Input.
 
 **Functions**
-- `sendSerial()` — TX `'m'` mod stream (LFO1/2 Q15 + EnvDCO Q15×4 + matrix pitch Q24).
+- `serial_send_mod_stream()` / `sendSerial()` — TX `'m'` (LFO1/2 Q15 + EnvDCO Q15×4 + matrix pitch Q24); body only under `ENABLE_MB_MOD_STREAM`.
   - **Called from:** `loop()` when `timer1msFlag`.
   - **When:** Soft timer ~1 ms.
-  - Note: `serialSendParamByteToDCOBuf` / `serialSendParamToDCOBuf` are **never written** anywhere → those two branches are effectively **Dead** (always empty).
-- `serial_send_param_change(byte, uint16_t)` — Immediate `'p'` to Screen (Serial1).
-  - **Called from:** **none (dead)** — only commented sites in `loop` / ParamId overload.
-- `serialSendParam32ToDCO(byte, uint32_t)` — Blocking `'x'` to DCO.
-  - **Called from:** **none (dead)** — only ParamId overload wrapper (also unused).
-- `serialSendParam32ToScreen(byte, uint32_t)` — Blocking `'x'` to Screen.
-  - **Called from:** ParamId overload ← `apply_param_gap_from_dco()`.
-  - **When:** Param table (gap from DCO).
-- `serialSendParam32ToInput(byte, uint32_t)` — Blocking `'x'` to Input (Serial8).
-  - **Called from:** ParamId overload ← `apply_param_manual_calibration_offset_from_dco()`.
-  - **When:** Param table.
-- `serialSendParamByteToScreen(byte, byte)` — `'y'` frame to Screen.
-  - **Called from:** **none (dead)** — only ParamId overload (unused).
-- `serialSendParamByteToDCOFunction(byte, byte)` — Immediate `'w'` to DCO.
-  - **Called from:** many `apply_param_*` in `params.ino`.
+- `serialSendParamToDCO(uint8_t, int16_t)` — `'p'` to DCO. The relay primitive behind `forward_dco`, including preset / cal ids 170–173.
+  - **Called from:** `forward_dco()` in `params.ino`.
   - **When:** Param table forwards.
-- `serialSendParamToDCOFunction(uint8_t, int)` — Immediate `'p'` to DCO.
-  - **Called from:** several `apply_param_*` in `params.ino`.
-  - **When:** Param table forwards.
-- `serial_send_param_change(ParamId, …)` / `serialSendParam32ToDCO(ParamId, …)` / `serialSendParamByteToScreen(ParamId, …)` / `serialSendParamByteToDCO(ParamId, …)` / `serialSendParamToDCO(ParamId, …)` — Thin wrappers to byte APIs.
-  - **Called from:** **none (dead)** except the Screen/Input 32-bit ParamId overloads used above (`serialSendParam32ToScreen` / `serialSendParam32ToInput`).
+- `serialSendParam32ToDCO(uint8_t, uint32_t)` — `'x'` to DCO.
+  - **Called from:** **none (dead)**.
+- `serialSendParam32ToScreen(uint8_t, uint32_t)` — `'x'` to Screen (Serial1).
+  - **Called from:** `main_handle_param32()` for gap 154.
+  - **When:** DCO `'x'`.
+- `serialSendParam32ToInput(uint8_t, uint32_t)` — `'x'` to Input (Serial8).
+  - **Called from:** `main_handle_param32()` for gap 154 / cal 155.
+  - **When:** DCO `'x'`.
+- `serialSendParam16ToInput(uint8_t, int16_t)` — `'p'` persistable mirror to Input.
+  - **Called from:** `main_handle_param16()`, for every id except `PARAM_DEBUG_COMMAND`.
+  - **When:** DCO `'p'` — this is how a preset recall reaches the panel.
+- `serial_send_bench_text_on(Stream&, …)` / `serial_send_bench_text_chunk()` — `'t'` ASCII chunk.
+  - **Called from:** `bench.h` dumps; `mb_uart_probe_poll()`.
+  - **When:** Bench dump / `MB_UART_PROBE`.
+- `mb_uart_probe_poll()` — 1 Hz `'t'` labels on every UART.
+  - **Called from:** `loop()` when `timer1msFlag`; no-op inline unless `MB_UART_PROBE`.
 
 ### `param_router.h`
 
 **Functions**
-- `param_router_apply<ValueT>()` — Linear search `ParamDescriptorT` table; invoke matching `apply`.
+- `param_router_build_jump()` — Expand `ParamDescriptorT` table into the 256-entry jump array.
+  - **Called from:** `init_param_router()`.
+  - **When:** Boot.
+- `param_router_apply_jump()` — O(1) dispatch; unknown ids are ignored.
   - **Called from:** `update_parameters()`.
   - **When:** Any decoded param frame.
 
 ### `params.ino`
 
-Central param router (`int32_t` values).
+Central param router (`int16_t` values) and the 256-entry apply jump table.
 
 **Functions**
-- `update_parameters(byte, int32_t)` — Entry → `param_router_apply` on `paramTable[]`.
-  - **Called from:** `main_handle_param16/8/32`; `input_handle_param16/8`.
+- `init_param_router()` — Build `paramApplyJump[]` from `paramTable[]`.
+  - **Called from:** `setup()`.
+  - **When:** Boot.
+- `update_parameters(uint16_t, int16_t)` — Entry → `param_router_apply_jump`.
+  - **Called from:** `main_handle_param16` / `main_handle_param32`; `input_handle_param16`.
   - **When:** Serial2 or Serial8 param frames.
+- `forward_dco(id, v)` — `serialSendParamToDCO`; the single relay primitive used by every forwarding applier.
+  - **Called from:** `apply_param_*` below.
 - All `apply_param_*()` below — **Called from:** **param table only** (never direct). **When:** matching ParamId.
 
 | Function | What it does |
 |----------|----------------|
-| `apply_param_saw_status` | `sawStatus` + `update_waveSelector(0)` |
-| `apply_param_saw2_status` | `saw2Status` + `update_waveSelector(1)` |
-| `apply_param_tri_status` | `triStatus` + `update_waveSelector(2)` |
-| `apply_param_sine_status` | `sineStatus` only (wave update commented historically) |
-| `apply_param_sqr1_status` | `sqr1Status` + forward to DCO |
-| `apply_param_sqr2_status` | `sqr2Status` + `update_waveSelector(3)` |
+| `apply_param_osc1_saw_enable` | `osc1SawEnable` + `update_waveSelector(0)` |
+| `apply_param_osc1_pulse_enable` | `osc1PulseEnable` (no mux write) |
+| `apply_param_osc1_tri_enable` | `osc1TriEnable` + `update_waveSelector(2)` |
+| `apply_param_osc2_saw_enable` | `osc2SawEnable` + `update_waveSelector(0)` |
+| `apply_param_osc2_pulse_enable` | `osc2PulseEnable` + `update_waveSelector(3)` |
+| `apply_param_osc2_tri_enable` | `osc2TriEnable` + `update_waveSelector(3)` |
+| `apply_param_osc3_saw/pulse/tri_enable` | **No-op** — no OSC3 on 4×2 analog |
+| `apply_param_sine_status` | `sineStatus` only |
 | `apply_param_resonance_comp` | `RESONANCEAmpCompensation` |
-| `apply_param_vca_adsr_restart` | `VCAADSRRestart` + `ADSR1_set_restart` |
-| `apply_param_vcf_adsr_restart` | `VCFADSRRestart` + `ADSR2_set_restart` |
+| `apply_param_vca_adsr_restart` | `VCAADSRRestart` + `ADSR_VCA_set_restart` |
+| `apply_param_vcf_adsr_restart` | `VCFADSRRestart` + `ADSR_VCF_set_restart` |
 | `apply_param_adsr3_to_osc_select` | Local + forward DCO |
-| `apply_param_lfo1_waveform` | Local LFO1 wave + forward DCO |
-| `apply_param_lfo2_waveform` | Local LFO2 wave + forward DCO |
-| `apply_param_osc1_interval` | Local + forward DCO |
-| `apply_param_osc2_interval` | Local + forward DCO |
-| `apply_param_osc2_detune` | Local + forward DCO 16-bit |
-| `apply_param_lfo2_to_detune2` | Local + forward DCO |
+| `apply_param_lfo1_waveform` / `apply_param_lfo2_waveform` | Local LFO wave + re-seed Mode0 freq |
+| `apply_param_osc1_interval` / `apply_param_osc2_interval` | Local + forward DCO |
+| `apply_param_osc3_interval` | Forward-only to DCO |
+| `apply_param_osc2_detune` | Local + forward DCO |
+| `apply_param_osc3_detune` | Forward-only to DCO |
+| `apply_param_lfo2_to_osc2` / `_osc3` / `_osc2_coarse` / `_osc3_coarse` | Forward-only to DCO |
+| `apply_param_character` | Forward-only to DCO |
 | `apply_param_osc_sync_mode` | Local + forward DCO |
-| `apply_param_portamento_time` | Local + forward DCO |
-| `apply_param_vcf_keytrack` | `VCFKeytrack` + `formula_update(1)` |
-| `apply_param_velocity_to_vcf` | Velocity→VCF scale float |
-| `apply_param_velocity_to_vca` | Velocity→VCA scale float |
-| `apply_param_sqr1_level` | Log map + `mcpUpdate` |
-| `apply_param_sqr2_level` | Log map + `mcpUpdate` |
-| `apply_param_sub_level` | Scale + `mcpUpdate` |
+| `apply_param_portamento_time` / `apply_param_portamento_mode` | Local + forward DCO |
+| `apply_param_vcf_keytrack` | `VCFKeytrack` + `VCFKeytrackModifier_q15` bake |
+| `apply_param_velocity_to_vcf` | Velocity→VCF Q15 scale |
+| `apply_param_velocity_to_vca` | Velocity→VCA Q15 scale |
+| `apply_param_osc1_level` / `apply_param_osc2_level` | `lin_to_log_128` map + `mcpUpdate` |
+| `apply_param_osc3_level` | Stores `OSC3LevelVal`; no analog destination |
+| `apply_param_sub_level` | Scale ×32 + `mcpUpdate` |
 | `apply_param_calibration_value` | **No-op** (compat) |
 | `apply_param_voice_mode` | Local + forward DCO |
 | `apply_param_unison_detune` | Local + forward DCO |
 | `apply_param_analog_drift_amount` | Local + forward DCO |
 | `apply_param_analog_drift_speed` | Local + forward DCO |
 | `apply_param_analog_drift_spread` | Local + forward DCO |
-| `apply_param_sync_mode` | Forward-only to DCO |
-| `apply_param_lfo1_to_dco` | Local + forward DCO |
-| `apply_param_lfo1_speed` | `controls_formula_update(1)` + forward |
-| `apply_param_lfo2_speed` | `controls_formula_update(2)` + forward |
-| `apply_param_vca_level` | Map 0..127 → `VCALevel` |
-| `apply_param_lfo1_to_vca` | Local + `formula_update(7)` |
+| `apply_param_sync_mode` / `apply_param_soft_sync` / `apply_param_subosc_divide` | Forward-only to DCO |
+| `apply_param_lfo1_to_dco` | Q24 pitch-depth bake + forward DCO |
+| `apply_param_lfo1_to_osc1` / `_osc2` / `_osc3` | Forward-only to DCO |
+| `apply_param_lfo1_speed` / `apply_param_lfo2_speed` | `expConverterFloat` + `setMode0Freq` |
+| `apply_param_vca_level` | Scale ×32 → `VCALevel` |
+| `apply_param_lfo1_to_vca` | Clamp + `cv_bake_lfo1_to_vca_scale` |
+| `apply_param_dist_drive` / `apply_param_dist_mix` / `apply_param_filter_mode` | Clamp into the CV globals |
 | `apply_param_lfo2_to_pw` | Local + forward DCO |
 | `apply_param_adsr3_to_pwm` | Offset −512 + forward DCO |
-| `apply_param_adsr3_to_detune1` | Local + forward DCO |
-| `apply_param_adsr1_attack_curve` | → `ADSR1_change_attack_curve` |
-| `apply_param_adsr1_decay_curve` | → `ADSR1_change_decay_curve` |
-| `apply_param_adsr2_attack_curve` | → `ADSR2_change_attack_curve` |
-| `apply_param_adsr2_decay_curve` | → `ADSR2_change_decay_curve` |
+| `apply_param_adsr3_to_detune1` / `apply_param_adsr3_pitch_mode` | Local + forward DCO |
+| `apply_param_adsr1_attack_curve` / `_decay_curve` | → `ADSR_VCA_change_*_curve` |
+| `apply_param_adsr2_attack_curve` / `_decay_curve` | → `ADSR_VCF_change_*_curve` |
+| `apply_param_mod_slotN_source` / `_dest` / `_depth` (N = 0..7) | `mod_matrix_set_*`; generated by `DECL_MOD_SLOT_APPLIERS` |
+| `apply_param_pw_value` | Local + forward DCO |
+| `apply_param_adsr1_to_vca` | `ADSR1toVCA` |
 | `apply_param_pwm_pots_manual` | Flag + forward DCO |
 | `apply_param_adsr3_enabled` | `ADSR3Enabled` |
 | `apply_param_function_key` | **No-op** |
@@ -259,9 +306,11 @@ Central param router (`int32_t` values).
 | `apply_param_manual_calibration_flag` | Manual + cal flags + forward DCO |
 | `apply_param_manual_calibration_stage` | Stage + forward DCO |
 | `apply_param_manual_calibration_offset` | Forward DCO only |
-| `apply_param_gap_from_dco` | Forward 32-bit to Screen |
-| `apply_param_manual_calibration_offset_from_dco` | Unpack + forward 32-bit to Input |
+| `apply_param_gap_from_dco` | **No-op** — the `'x'` fan-out to Input/Screen happens in `main_handle_param32` |
+| `apply_param_manual_calibration_offset_from_dco` | **No-op** — same, forwarded to Input by `main_handle_param32` |
 | `apply_param_manual_calibration_store` | Forward store edge to DCO |
+| `apply_param_preset_save` (170) / `apply_param_preset_load` (171) / `apply_param_preset_dump` (172) / `apply_param_cal_dump` (173) | Pure `forward_dco` — the DCO owns the preset store, this board keeps no preset state. See [`PRESET_RELAY.md`](PRESET_RELAY.md) |
+| `apply_param_debug_command` | 40/41/42 → local `bench_*`; anything else forwarded to DCO |
 
 ### `serial_parser.h`
 
@@ -271,15 +320,21 @@ Generic non-blocking frame parser.
 - `serial_parser_reset()` — Clear context to wait-for-cmd.
   - **Called from:** `serial_parser_check_timeout`; `serial_parser_process_byte`.
   - **When:** Timeout or frame complete.
-- `serial_parser_find_cmd()` — Lookup command def.
-  - **Called from:** `serial_parser_process_byte`.
-  - **When:** First byte of frame.
+- `serial_command_table_init()` — Fill a 256-entry `SerialCommandTable` LUT from a `SerialCommandDef[]`; unlisted bytes keep `payload_len == 0`.
+  - **Called from:** `init_serial_parsers()`.
+  - **When:** Boot.
 - `serial_parser_check_timeout()` — Drop stale partial frames.
-  - **Called from:** `read_serial_2`; `read_serial_8`.
-  - **When:** Before draining UART if mid-payload.
-- `serial_parser_process_byte()` — State machine; invoke `on_frame` when complete.
-  - **Called from:** `read_serial_2`; `read_serial_8`.
+  - **Called from:** `serial_parser_drain`.
+  - **When:** Stream idle mid-frame.
+- `serial_parser_dispatch()` — Invoke `on_frame` if the LUT length matches. **An unregistered command byte, or a length mismatch, returns here silently** — this is where an unrelayed preset frame disappears.
+  - **Called from:** `serial_parser_process_byte`.
+  - **When:** Frame complete.
+- `serial_parser_process_byte()` — RAW / COBS state machine.
+  - **Called from:** `serial_parser_drain`.
   - **When:** Each RX byte.
+- `serial_parser_drain()` — Read up to `SERIAL_DRAIN_BYTE_BUDGET` (64) bytes per call.
+  - **Called from:** `read_serial_2`; `read_serial_8`.
+  - **When:** Every `loop` / soft timer.
 
 ### `serial_param_protocol.h`
 
@@ -294,19 +349,30 @@ Generic non-blocking frame parser.
 
 ### `serial_protocol.h`
 
-Mainboard↔DCO command enums / payload lengths.
+Mainboard↔DCO command enums / payload lengths (`'n'`, `'o'`, `'e'`, `'m'`, `'t'`, `'p'`, `'x'`).
 
 **Functions**
-- `serial_protocol_payload_len(char)` — Map cmd → size.
+- `serial_protocol_payload_len(uint8_t)` — Map cmd → size.
   - **Called from:** **none (dead)** — tables use constexpr lengths directly.
 
 ### `serial_input_protocol.h`
 
-Input→mainboard command enums / sizes.
+Input ↔ DCO command superset: `'a'`–`'d'`, `'p'`, 16-char `'q'`, `'x'`, `'B'`/`'C'` bulk, and the `'N'`/`'O'`/`'L'` preset directory frames. **Byte-identical to the master copy** at `DCO3-MONOSYNTH/DCO/serial_input_protocol.h`; this board implements or relays a subset (`'B'`/`'C'` are host→DCO over USB only).
 
 **Functions**
-- `input_serial_payload_len(char)` — Map cmd → size.
+- `serial_input_payload_len(uint8_t)` — Map cmd → size.
   - **Called from:** **none (dead)** — tables use constexpr lengths directly.
+
+### `serial_frame.h`
+
+RAW / COBS framing codec around the inner `[cmd][payload]` frame. Its default `SERIAL_INNER_MAX_PAYLOAD` of 8 is overridden to **17** by `Serial.h` before inclusion; `serial_frame_stuff()` refuses any payload above that, so the cap has to be raised before a longer frame can be relayed.
+
+**Functions**
+- `serial_frame_write()` — Stuff + write one inner frame to a stream. Every relay handler ends here.
+  - **Called from:** `Serial.ino` relay handlers; `Serial2.ino` senders.
+  - **When:** Any TX.
+- `serial_frame_stuff()` / `serial_frame_unstuff()` / `serial_cobs_encode()` / `serial_cobs_decode()` / `serial_inner_pack()` / `serial_inner_unpack()` — Framing helpers.
+  - **Called from:** `serial_frame_write`; `serial_parser.h`.
 
 ---
 
@@ -330,7 +396,7 @@ ADSR globals, Bézier `adsr` instances, `ADSRVoices[]`. Prototypes implied by `.
   - **When:** Hot path (time-gated).
 - `ADSR1_set_restart()` — Apply `VCAADSRRestart` to all ADSR1.
   - **Called from:** `apply_param_vca_adsr_restart()`.
-  - **When:** Param table. (Also only in commented `flashData` load.)
+  - **When:** Param table.
 - `ADSR2_set_restart()` — Apply `VCFADSRRestart` to all ADSR2.
   - **Called from:** `apply_param_vcf_adsr_restart()`.
   - **When:** Param table.
@@ -383,7 +449,7 @@ LFO classes, drift LFOs, modulation globals. Declares `LFO3()` but **no definiti
 
 **Functions**
 - `mcpUpdate()` — Push SQR1/SQR2/Sub levels to three MCP4728 chips.
-  - **Called from:** `apply_param_sqr1/sqr2/sub_level`; `update_CV_outs` / `update_CV_outs_manual_calibration`.
+  - **Called from:** `apply_param_osc1_level` / `_osc2_level` / `_sub_level`; `update_CV_outs` / `update_CV_outs_manual_calibration`.
   - **When:** Param / CV tick / manual-cal.
 
 ### `cv_out.ino`
@@ -396,13 +462,9 @@ LFO classes, drift LFOs, modulation globals. Declares `LFO3()` but **no definiti
   - **Called from:** `loop()` when `manualCalibrationFlag == true`.
   - **When:** Manual-cal hot path.
 
-### `formulas.h` / `formulas.ino`
-
-Float-era formula scalars **retired**. Depths bake in `cv_out.ino` / `params.ino`.
-
 ### `waveSelector.h`
 
-74HC595 mux pins / pin arrays. **No function definitions.**
+74HC595 mux pins / pin arrays; includes the vendored `_build_libs/RoxMux_fela/src/RoxMux_fela.h`. **No function definitions.**
 
 ### `waveSelector.ino`
 
@@ -411,7 +473,7 @@ Float-era formula scalars **retired**. Depths bake in `cv_out.ino` / `params.ino
   - **Called from:** `setup()`.
   - **When:** Boot.
 - `update_waveSelector(byte)` — Per-wave or all (case 4) pin writes + `update()`.
-  - **Called from:** `apply_param_saw/saw2/tri/sqr2_status` (cases 0–3). Case 4 only in **commented** flashData.
+  - **Called from:** `apply_param_osc1_saw_enable` / `_osc1_tri_enable` / `_osc2_saw_enable` / `_osc2_pulse_enable` / `_osc2_tri_enable` (cases 0, 2, 3). Case 4 has no live caller.
   - **When:** Param table.
 
 ### `MCP4728.ino`
@@ -497,25 +559,15 @@ SPI settings stub; body commented. **No active function definitions.** Included 
 
 ---
 
-## 5. Disabled / mostly commented
+## 5. Disabled / deleted
 
-### `flashData.h`
+### `flashData.h` / `flashData.ino` — **deleted**
 
-Preset buffer / SD vs EEPROM includes. **No function definitions.**
+The board's former SD/EEPROM preset I/O (`initEEPROM`, `loadPreset`, `writePreset`, `load_preset_name`, `get_preset_name`) is gone, not commented. No preset is stored or unpacked here: the DCO owns the instrument's 256-slot LittleFS store and this board only relays preset traffic ([`PRESET_RELAY.md`](PRESET_RELAY.md)). `ENABLE_SD` now only reserves the SDMMC pins for `init_timers()`.
 
-### `flashData.ino`
+### `formulas.h` / `formulas.ino` — **deleted**
 
-**Entirely commented-out** former preset I/O. No active definitions.
-
-| Commented function | Former role |
-|--------------------|-------------|
-| `initEEPROM()` | Mount SD/EEPROM, load bank, `loadPreset(1)` |
-| `load_preset_name()` | Read name bytes |
-| `loadPreset()` | Unpack preset into params + side effects |
-| `get_preset_name()` | Copy name into array |
-| `writePreset()` | Persist preset bank |
-
-Call sites in `setup` (`initEEPROM`) and Serial1 (`writePreset`) are also commented.
+Float-era formula scalars; depths bake in `cv_out.ino` / `params.ino`.
 
 ### `BU2505FV.ino`
 
@@ -543,20 +595,24 @@ All detailed docs live under `docs/` (this file included). Root `README.md` is t
 | `docs/REFERENCE_AI.md` | Current | Deep semantic map. |
 | `docs/FILE_INDEX.md` | Current | This file — files, functions, call sites. |
 | `docs/README_serial_and_params.md` | Current | Shared serial / ParamId how-to. |
+| `docs/MAINBOARD_REINTEGRATION.md` | Current | UART topology, ownership, per-link frame tables. |
+| `docs/PRESET_RELAY.md` | Current | Preset traffic Input ↔ DCO across this board. |
 
 ---
 
 ## 7. External libraries (not in this repo)
 
-| Library | Used by |
-|---------|---------|
-| `ADSR_Bezier` | `ADSR.*` |
-| `mo-lfo` | `LFO.*` |
-| `MCP4728_multiaddress` | `MCP4728.ino` |
-| `RoxMux` (74HC595) | `waveSelector.*` |
-| `Wire` | MCP4728 I2C |
-| `RunningAverage` | Optional `#ifdef RUNNING_AVERAGE` |
-| `STM32SD` / `EEPROM` | Only via commented `flashData` (+ `ENABLE_SD` include path) |
+| Library | Used by | Status |
+|---------|---------|--------|
+| `ADSR_Bezier` | `ADSR.*` | Active |
+| `mo-lfo` | `LFO.*` | Active |
+| `MCP4728_multiaddress` | `MCP4728.ino` | Active |
+| `RoxMux_fela` (74HC595) | `waveSelector.*` | Active; vendored under `_build_libs/RoxMux_fela` |
+| `Wire` | `MCP4728.ino` | Active |
+| `RunningAverage` | `bench.h` | Active via `RUNNING_AVERAGE` in `MAINBOARD-CONTROLLER.ino` |
+| `STM32SD` / `EEPROM` | — | Unused; `flashData.*` deleted, no preset store on this board |
+| `SPI` | `SPI_settings.h` / `BU2505FV.ino` | Inactive; `ENABLE_SPI` undefined, include commented |
+| `Adafruit_MCP4728` | `MCP4728.ino` | Inactive; include commented |
 
 ---
 
@@ -564,10 +620,11 @@ All detailed docs live under `docs/` (this file included). Root `README.md` is t
 
 | Goal | Start here |
 |------|------------|
-| New ParamId | `params_def.h` → `apply_param_*` + `paramTable[]` in `params.ino` |
+| New ParamId | Master `params_def.h`, copied out → `apply_param_*` + `paramTable[]` in `params.ino` |
 | Serial2 (DCO) RX command | `serial_protocol.h` + handler in `Serial.ino` `mainSerial2Commands[]` |
 | Serial8 (Input) RX command | `serial_input_protocol.h` + handler in `Serial.ino` `inputSerial8Commands[]` |
-| Forward param to DCO | `serialSendParamToDCO` from an `apply_param_*` |
+| Forward param to DCO | `forward_dco()` from an `apply_param_*` |
+| Relay a frame Input ↔ DCO | Handler + row in the matching table above; raise `SERIAL_INNER_MAX_PAYLOAD` if over 17. [`PRESET_RELAY.md`](PRESET_RELAY.md) |
 | VCA / VCF CV math | `cv_out.ino` `update_CV_outs()` (Q15 bakers) |
 | ADSR timing / curves | `ADSR.ino`; curves via params 48–51 |
 | LFO rate / shape | `LFO.ino` + `apply_param_lfo*_speed/waveform` |
@@ -577,4 +634,4 @@ All detailed docs live under `docs/` (this file included). Root `README.md` is t
 | Hardware PWM pins | `Timers.h` + `init_timers()` |
 | Manual calibration CV path | `apply_param_manual_calibration_*` → `update_CV_outs_manual_calibration` |
 | Loop profiling | Define `RUNNING_AVERAGE` → `print_mainboard_loop_timings` |
-| Preset load/save | Re-enable `flashData.ino` (currently fully commented) |
+| Preset load/save | Not implemented here — DCO `preset_store.*`; this board only relays ([`PRESET_RELAY.md`](PRESET_RELAY.md)) |

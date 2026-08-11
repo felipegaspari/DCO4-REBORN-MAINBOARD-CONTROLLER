@@ -53,7 +53,10 @@ byte OSC2Interval = 24;
 uint16_t OSC2Detune = 255;
 uint16_t PW = 0;
 
-byte presetName[12] = { 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32 };
+// 16-char preset name, latest 'q' frame (space-padded ASCII). Display/echo copy
+// only — the authoritative name lives in the DCO's preset record.
+byte presetName[16] = { 32, 32, 32, 32, 32, 32, 32, 32,
+                        32, 32, 32, 32, 32, 32, 32, 32 };
 
 void update_parameters(uint16_t paramNumber, int16_t paramValue);
 void init_param_router();

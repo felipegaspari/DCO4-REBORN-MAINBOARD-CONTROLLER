@@ -7,6 +7,41 @@ static SerialParserContext inputSerial8Parser;
 const char* g_mb_uart_rx_port = "?";
 #endif
 
+#define MB_FILTER_FORWARD_RING_CAP 8
+static uint8_t mb_filter_forward_ring[MB_FILTER_FORWARD_RING_CAP][INPUT_SERIAL_LEN_FILTER_BLOCK];
+static uint8_t mb_filter_forward_ring_head = 0;
+static uint8_t mb_filter_forward_ring_tail = 0;
+static uint8_t mb_filter_forward_ring_count = 0;
+
+static void mb_filter_forward_ring_enqueue(const uint8_t* payload) {
+  if (mb_filter_forward_ring_count == MB_FILTER_FORWARD_RING_CAP) {
+    mb_filter_forward_ring_tail = (uint8_t)((mb_filter_forward_ring_tail + 1u) % MB_FILTER_FORWARD_RING_CAP);
+    mb_filter_forward_ring_count--;
+  }
+  memcpy(mb_filter_forward_ring[mb_filter_forward_ring_head], payload, INPUT_SERIAL_LEN_FILTER_BLOCK);
+  mb_filter_forward_ring_head = (uint8_t)((mb_filter_forward_ring_head + 1u) % MB_FILTER_FORWARD_RING_CAP);
+  mb_filter_forward_ring_count++;
+}
+
+static void mb_filter_forward_ring_drain() {
+#ifdef ENABLE_SERIAL8
+  while (mb_filter_forward_ring_count > 0 && Serial8.availableForWrite() > 0) {
+    serial_frame_write(
+      Serial8,
+      INPUT_CMD_FILTER_BLOCK,
+      mb_filter_forward_ring[mb_filter_forward_ring_tail],
+      INPUT_SERIAL_LEN_FILTER_BLOCK
+    );
+    mb_filter_forward_ring_tail = (uint8_t)((mb_filter_forward_ring_tail + 1u) % MB_FILTER_FORWARD_RING_CAP);
+    mb_filter_forward_ring_count--;
+  }
+#else
+  (void)mb_filter_forward_ring_tail;
+  (void)mb_filter_forward_ring_head;
+  (void)mb_filter_forward_ring_count;
+#endif
+}
+
 static void main_handle_note_on(char, const uint8_t* payload, uint8_t len) {
   if (len != SERIAL_PAYLOAD_LEN_NOTE_ON) return;
   uint8_t voice_n = payload[0];
@@ -121,6 +156,22 @@ static void input_handle_filter_block(char, const uint8_t* payload, uint8_t len)
   cv_bake_lfo2_to_vcf_scale();
 }
 
+// Serial2 ('d' from the DCO): apply locally, then mirror to Input so a preset
+// recall or USB/MIDI edit moves the panel's filter pots. Only the DCO-origin
+// path mirrors — forwarding an Input-origin block back to Input would echo
+// every panel filter edit straight to its sender.
+static void main_handle_filter_block(char c, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_FILTER_BLOCK) return;
+  input_handle_filter_block(c, payload, len);
+#ifdef ENABLE_SERIAL8
+  if (Serial8.availableForWrite() > 0) {
+    serial_frame_write(Serial8, INPUT_CMD_FILTER_BLOCK, payload, INPUT_SERIAL_LEN_FILTER_BLOCK);
+  } else {
+    mb_filter_forward_ring_enqueue(payload);
+  }
+#endif
+}
+
 static void input_handle_param16(char, const uint8_t* payload, uint8_t len) {
   if (len != INPUT_SERIAL_LEN_PARAM_16) return;
   ParamFrame frame;
@@ -128,9 +179,90 @@ static void input_handle_param16(char, const uint8_t* payload, uint8_t len) {
   update_parameters(frame.id, (int16_t)frame.value);
 }
 
+// 'q': the 16-char name Input just edited. Keep a local display copy and pass it
+// through to the DCO, which needs it staged before the PARAM_PRESET_SAVE that
+// follows (the name is written verbatim into the preset record).
 static void input_handle_preset_name(char, const uint8_t* payload, uint8_t len) {
   if (len != INPUT_SERIAL_LEN_PRESET_NAME) return;
-  for (uint8_t i = 0; i < 8; i++) presetName[i] = payload[i];
+  for (uint8_t i = 0; i < INPUT_SERIAL_LEN_PRESET_NAME; i++) presetName[i] = payload[i];
+#ifdef ENABLE_SERIAL2
+  serial_frame_write(Serial2, INPUT_CMD_PRESET_NAME, payload, INPUT_SERIAL_LEN_PRESET_NAME);
+#endif
+}
+
+// --- preset directory relay ('N' / 'O' / 'L') ----------------------------------
+//
+// The DCO owns the 256-slot preset store; Input only caches slot names in RAM.
+// Those three frames are pure pass-through, but nothing crosses this board
+// implicitly — every relayed byte needs its own LUT entry and handler.
+//
+// Writes go straight out rather than through mb_filter_forward_ring: a directory
+// push is 256 back-to-back 'O' frames and dropping any of them would leave a
+// wrong name in Input's cache. Both links run at 2.5 Mbaud, so the Mainboard
+// forwards at exactly the rate it receives and the 512-byte TX buffer absorbs
+// the jitter; it is a one-shot on Input boot / browse-mode-enter, never a
+// per-encoder-tick path.
+
+// 'N' Input → DCO: "send me the whole directory".
+static void input_handle_preset_dir_request(char, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_PRESET_DIR_REQUEST) return;
+#ifdef ENABLE_SERIAL2
+  serial_frame_write(Serial2, INPUT_CMD_PRESET_DIR_REQUEST, payload, len);
+#endif
+}
+
+// 'O' DCO → Input: one [slot][name:16] directory entry.
+static void main_handle_preset_dir_entry(char, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_PRESET_DIR_ENTRY) return;
+#ifdef ENABLE_SERIAL8
+  serial_frame_write(Serial8, INPUT_CMD_PRESET_DIR_ENTRY, payload, len);
+#endif
+}
+
+// 'L' DCO → Input: the DCO just finished loading [slot] (boot recall, MIDI PC,
+// USB/dco_control or Input itself), so Input's Screen display can follow.
+static void main_handle_preset_loaded(char, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_PRESET_LOADED) return;
+#ifdef ENABLE_SERIAL8
+  serial_frame_write(Serial8, INPUT_CMD_PRESET_LOADED, payload, len);
+#endif
+}
+
+// --- panel block frames: apply here, and shadow them on the DCO -----------------
+//
+// The Mainboard owns the analog envelopes and filter, so it consumes 'a'-'d'
+// itself. But the DCO owns the preset store, and it builds a record out of its
+// own copies of those same values — and on this instrument the DCO has no direct
+// link to the panel. So an Input-origin block is applied locally *and* passed on,
+// otherwise a saved preset would capture stale envelope and filter settings.
+//
+// Only the Serial8 (Input) side forwards. The identical frames arriving on
+// Serial2 come from the DCO itself (USB/MIDI edits and preset recalls) and must
+// not be echoed back to it.
+static void mb_forward_block_to_dco(uint8_t cmd, const uint8_t* payload, uint8_t len) {
+#ifdef ENABLE_SERIAL2
+  serial_frame_write(Serial2, cmd, payload, len);
+#endif
+}
+
+static void input8_handle_adsr1(char c, const uint8_t* payload, uint8_t len) {
+  input_handle_adsr1(c, payload, len);
+  mb_forward_block_to_dco(INPUT_CMD_ADSR1_BLOCK, payload, len);
+}
+
+static void input8_handle_adsr2(char c, const uint8_t* payload, uint8_t len) {
+  input_handle_adsr2(c, payload, len);
+  mb_forward_block_to_dco(INPUT_CMD_ADSR2_BLOCK, payload, len);
+}
+
+static void input8_handle_adsr3(char c, const uint8_t* payload, uint8_t len) {
+  input_handle_adsr3(c, payload, len);
+  mb_forward_block_to_dco(INPUT_CMD_ADSR3_BLOCK, payload, len);
+}
+
+static void input8_handle_filter_block(char c, const uint8_t* payload, uint8_t len) {
+  input_handle_filter_block(c, payload, len);
+  mb_forward_block_to_dco(INPUT_CMD_FILTER_BLOCK, payload, len);
 }
 
 static const SerialCommandDef mainSerial2Commands[] = {
@@ -142,16 +274,20 @@ static const SerialCommandDef mainSerial2Commands[] = {
   // USB/MIDI analog mirror from DCO (same handlers as Input Serial8).
   { INPUT_CMD_ADSR1_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,    input_handle_adsr1 },
   { INPUT_CMD_ADSR2_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,    input_handle_adsr2 },
-  { INPUT_CMD_FILTER_BLOCK, INPUT_SERIAL_LEN_FILTER_BLOCK,  input_handle_filter_block },
+  { INPUT_CMD_FILTER_BLOCK, INPUT_SERIAL_LEN_FILTER_BLOCK,  main_handle_filter_block },
+  // Preset store answers, relayed on to Input.
+  { INPUT_CMD_PRESET_DIR_ENTRY, INPUT_SERIAL_LEN_PRESET_DIR_ENTRY, main_handle_preset_dir_entry },
+  { INPUT_CMD_PRESET_LOADED,    INPUT_SERIAL_LEN_PRESET_LOADED,    main_handle_preset_loaded },
 };
 
 static const SerialCommandDef inputSerial8Commands[] = {
-  { INPUT_CMD_ADSR1_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,   input_handle_adsr1 },
-  { INPUT_CMD_ADSR2_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,   input_handle_adsr2 },
-  { INPUT_CMD_ADSR3_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,   input_handle_adsr3 },
-  { INPUT_CMD_FILTER_BLOCK, INPUT_SERIAL_LEN_FILTER_BLOCK, input_handle_filter_block },
+  { INPUT_CMD_ADSR1_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,   input8_handle_adsr1 },
+  { INPUT_CMD_ADSR2_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,   input8_handle_adsr2 },
+  { INPUT_CMD_ADSR3_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,   input8_handle_adsr3 },
+  { INPUT_CMD_FILTER_BLOCK, INPUT_SERIAL_LEN_FILTER_BLOCK, input8_handle_filter_block },
   { INPUT_CMD_PARAM_16,     INPUT_SERIAL_LEN_PARAM_16,     input_handle_param16 },
   { INPUT_CMD_PRESET_NAME,  INPUT_SERIAL_LEN_PRESET_NAME,  input_handle_preset_name },
+  { INPUT_CMD_PRESET_DIR_REQUEST, INPUT_SERIAL_LEN_PRESET_DIR_REQUEST, input_handle_preset_dir_request },
 };
 
 void init_serial_parsers() {
@@ -185,7 +321,9 @@ inline void read_serial_2() {
 #ifdef MB_UART_RX_LOG
   g_mb_uart_rx_port = "s2";
 #endif
+  mb_filter_forward_ring_drain();
   serial_parser_drain(mainSerial2Parser, mainSerial2Lut, Serial2, SERIAL_DRAIN_BYTE_BUDGET);
+  mb_filter_forward_ring_drain();
 #endif
 }
 

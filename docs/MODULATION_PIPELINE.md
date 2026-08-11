@@ -58,12 +58,14 @@ flowchart LR
 
 | Cmd | Handler | Effect |
 |-----|---------|--------|
-| `'a'` | `input_handle_adsr1` | EnvVCA A/D/S/R |
-| `'b'` | `input_handle_adsr2` | EnvVCF A/D/S/R |
-| `'c'` | `input_handle_adsr3` | EnvDCO A/D/S/R |
-| `'d'` | `input_handle_filter_block` | CUTOFF, RESONANCE, ADSR2→VCF, LFO2→VCF + scale bake |
+| `'a'` | `input8_handle_adsr1` → `input_handle_adsr1` | EnvVCA A/D/S/R |
+| `'b'` | `input8_handle_adsr2` → `input_handle_adsr2` | EnvVCF A/D/S/R |
+| `'c'` | `input8_handle_adsr3` → `input_handle_adsr3` | EnvDCO A/D/S/R |
+| `'d'` | `input8_handle_filter_block` → `input_handle_filter_block` | CUTOFF, RESONANCE, ADSR2→VCF, LFO2→VCF + scale bake |
 | `'p'` | param handler | `update_parameters` (PW=210, ADSR1→VCA=222) |
-| `'q'` | preset name | Copies 8 chars |
+| `'q'` | preset name | Copies 16 chars into `presetName[]`, then forwards to the DCO |
+
+Each `input8_*` wrapper also shadows its block frame on the DCO so preset records hold current envelope / filter values: [`PRESET_RELAY.md`](PRESET_RELAY.md).
 
 Param apply type: **`int16_t`** jump table. No Input `'e'`/`'f'` blocks.
 
@@ -120,7 +122,7 @@ When `manualCalibrationFlag` is set:
 ## Inactive pieces
 
 - **Screen RX** (`read_serial_1`): drain-only stub.
-- **Local presets** (`flashData.ino`): commented out.
+- **Local presets:** none. `flashData.*` is deleted; the DCO owns the store ([`PRESET_RELAY.md`](PRESET_RELAY.md)).
 - **SPI DAC / Screen module / autotune**: flags off.
 - **Float-era `formulas.ino` / `setPWMOuts` / `'s'`/`'f'` streams:** retired.
 
