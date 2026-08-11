@@ -2,7 +2,7 @@
 #define SERIAL_PROTOCOL_H
 
 #include <stdint.h>
-#include "serial_input_protocol.h"
+#include "_build_libs/DCO-PROTOCOL/serial_input_protocol.h"
 
 // -----------------------------------------------------------------------------
 // Mainboard ↔ DCO slim LE command set (Serial2 @ 2.5 M).

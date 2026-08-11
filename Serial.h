@@ -13,11 +13,11 @@
 #define SERIAL_INNER_MAX_PAYLOAD 17
 #endif
 
-#include "serial_param_protocol.h"
+#include "_build_libs/DCO-PROTOCOL/serial_param_protocol.h"
 #include "serial_protocol.h"
-#include "serial_input_protocol.h"
-#include "serial_frame.h"
-#include "serial_parser.h"
+#include "_build_libs/DCO-PROTOCOL/serial_input_protocol.h"
+#include "_build_libs/DCO-PROTOCOL/serial_frame.h"
+#include "_build_libs/DCO-PROTOCOL/serial_parser.h"
 
 // STM32 core 3.x declares `extern Uart SerialN` but only *defines* them if
 // ENABLE_HWSERIALn reaches core Serial.cpp (often cached, so build_opt.h is

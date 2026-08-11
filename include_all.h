@@ -2,8 +2,10 @@
 #define __INCLUDE_ALL_H__
 
 #include "Arduino.h"
-#include "params_def.h"
-#include "param_router.h"
+// Relative _build_libs paths: Arduino IDE does not put sketch libraries/ on the
+// STM32 include path reliably (same pattern as ADSR / RoxMux on this board).
+#include "_build_libs/DCO-PROTOCOL/params_def.h"
+#include "_build_libs/DCO-PROTOCOL/param_router.h"
 #include "params.h"
 #include "cv_bezier.h"
 #include "cv_state.h"

@@ -86,7 +86,7 @@ Main sketch: `MAINBOARD-CONTROLLER.ino`.
 
 | Library | Path | Notes |
 |---------|------|--------|
-| `DCO-PROTOCOL` | `libraries/DCO-PROTOCOL` and `_build_libs/DCO-PROTOCOL` → `../../DCO-PROTOCOL` | Shared `params_def.h` / serial headers. **`libraries/`** is what Arduino IDE picks up; **`_build_libs/`** is for `arduino-cli --libraries ./_build_libs`. |
+| `DCO-PROTOCOL` | `_build_libs/DCO-PROTOCOL` → `../../DCO-PROTOCOL` | Shared `params_def.h` / serial headers. Included by relative `_build_libs/DCO-PROTOCOL/...` paths so Arduino IDE finds them (same pattern as ADSR / RoxMux). `libraries/DCO-PROTOCOL` remains for tools that scan sketch libraries. |
 | `ADSR_Bezier` | `_build_libs/ADSR_Bezier` → `../../ADSR_Bezier` | Symlink to monorepo root; track **`Q15`**. |
 | `mo-lfo` | `_build_libs/mo-lfo` → `../../mo-lfo` | Symlink to monorepo root; track **`q15`**. `LFO.ino` `#include`s `mo-lfo.cpp` so Arduino IDE links it. |
 | `RoxMux_fela` | `_build_libs/RoxMux_fela` → `../../RoxMux_FELA` | FELA fork. Included by relative path like ADSR/mo-lfo (`"_build_libs/RoxMux_fela/src/RoxMux_fela.h"`) so Arduino IDE finds it without library discovery. Nested headers use quotes. |
