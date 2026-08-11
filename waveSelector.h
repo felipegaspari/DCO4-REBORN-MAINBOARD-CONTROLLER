@@ -1,7 +1,7 @@
 #ifndef __WAVESELECTOR_H__
 #define __WAVESELECTOR_H__
 
-#include <RoxMux_fela.h>
+#include "_build_libs/RoxMux_fela/src/RoxMux_fela.h"
 
 Rox74HC595<2> waveSelectorMux;
 
