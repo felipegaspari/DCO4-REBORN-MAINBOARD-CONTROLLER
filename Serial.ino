@@ -156,10 +156,10 @@ static void input_handle_filter_block(char, const uint8_t* payload, uint8_t len)
   cv_bake_lfo2_to_vcf_scale();
 }
 
-// Serial2 ('d' from the DCO): apply locally, then mirror to Input so a preset
-// recall or USB/MIDI edit moves the panel's filter pots. Only the DCO-origin
-// path mirrors — forwarding an Input-origin block back to Input would echo
-// every panel filter edit straight to its sender.
+// Serial2 ('a'-'d' from the DCO): apply locally, then mirror to Input so a
+// preset recall or USB/MIDI edit moves the panel's faders and pots and reaches
+// the Screen. Only the DCO-origin path mirrors — forwarding an Input-origin
+// block back to Input would echo every panel edit straight to its sender.
 static void main_handle_filter_block(char c, const uint8_t* payload, uint8_t len) {
   if (len != INPUT_SERIAL_LEN_FILTER_BLOCK) return;
   input_handle_filter_block(c, payload, len);
@@ -170,6 +170,36 @@ static void main_handle_filter_block(char c, const uint8_t* payload, uint8_t len
     mb_filter_forward_ring_enqueue(payload);
   }
 #endif
+}
+
+// The envelope blocks take the plain drop-if-full path rather than the filter
+// ring: they arrive only on a preset recall or a host edit, never per encoder
+// tick, so there is nothing to smooth out.
+static void mb_forward_block_to_input(uint8_t cmd, const uint8_t* payload, uint8_t len) {
+#ifdef ENABLE_SERIAL8
+  if (Serial8.availableForWrite() < 1) return;
+  serial_frame_write(Serial8, cmd, payload, len);
+#endif
+}
+
+static void main_handle_adsr1(char c, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) return;
+  input_handle_adsr1(c, payload, len);
+  mb_forward_block_to_input(INPUT_CMD_ADSR1_BLOCK, payload, len);
+}
+
+static void main_handle_adsr2(char c, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) return;
+  input_handle_adsr2(c, payload, len);
+  mb_forward_block_to_input(INPUT_CMD_ADSR2_BLOCK, payload, len);
+}
+
+// EnvDCO drives the DCO's own engine; the Mainboard only keeps a copy and
+// passes it on so the panel faders follow.
+static void main_handle_adsr3(char c, const uint8_t* payload, uint8_t len) {
+  if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) return;
+  input_handle_adsr3(c, payload, len);
+  mb_forward_block_to_input(INPUT_CMD_ADSR3_BLOCK, payload, len);
 }
 
 static void input_handle_param16(char, const uint8_t* payload, uint8_t len) {
@@ -271,9 +301,10 @@ static const SerialCommandDef mainSerial2Commands[] = {
   { SERIAL_CMD_EXPRESSION,  SERIAL_PAYLOAD_LEN_EXPRESSION,  main_handle_expression },
   { SERIAL_CMD_PARAM_16,    INPUT_SERIAL_LEN_PARAM_16,      main_handle_param16 },
   { SERIAL_CMD_PARAM_32,    INPUT_SERIAL_LEN_PARAM_32,      main_handle_param32 },
-  // USB/MIDI analog mirror from DCO (same handlers as Input Serial8).
-  { INPUT_CMD_ADSR1_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,    input_handle_adsr1 },
-  { INPUT_CMD_ADSR2_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,    input_handle_adsr2 },
+  // USB/MIDI/preset mirror from DCO: applied here, then relayed to Input.
+  { INPUT_CMD_ADSR1_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,    main_handle_adsr1 },
+  { INPUT_CMD_ADSR2_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,    main_handle_adsr2 },
+  { INPUT_CMD_ADSR3_BLOCK,  INPUT_SERIAL_LEN_ADSR_BLOCK,    main_handle_adsr3 },
   { INPUT_CMD_FILTER_BLOCK, INPUT_SERIAL_LEN_FILTER_BLOCK,  main_handle_filter_block },
   // Preset store answers, relayed on to Input.
   { INPUT_CMD_PRESET_DIR_ENTRY, INPUT_SERIAL_LEN_PRESET_DIR_ENTRY, main_handle_preset_dir_entry },

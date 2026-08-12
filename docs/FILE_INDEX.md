@@ -151,20 +151,25 @@ Inbound parsers: Serial1 (stub), Serial2 (DCO), Serial8 (Input). Also holds both
   - **Called from:** `loop()` every iteration.
   - **When:** Every `loop`; body under `#ifdef ENABLE_SERIAL2`.
 - `input_handle_adsr1()` — Load EnvVCA A/D/S/R words; `mark_adsr_params_dirty` on change.
-  - **Called from:** Serial2 parser (USB/MIDI mirror); `input8_handle_adsr1()`.
+  - **Called from:** `main_handle_adsr1()`; `input8_handle_adsr1()`.
   - **When:** DCO `'a'` or Input `'a'`.
 - `input_handle_adsr2()` — Load EnvVCF A/D/S/R.
-  - **Called from:** Serial2 parser (USB/MIDI mirror); `input8_handle_adsr2()`.
+  - **Called from:** `main_handle_adsr2()`; `input8_handle_adsr2()`.
   - **When:** DCO `'b'` or Input `'b'`.
 - `input_handle_adsr3()` — Load EnvDCO A/D/S/R.
-  - **Called from:** `input8_handle_adsr3()` only — `'c'` is **not** registered on Serial2.
-  - **When:** Input `'c'`.
+  - **Called from:** `main_handle_adsr3()`; `input8_handle_adsr3()`.
+  - **When:** DCO `'c'` or Input `'c'`.
 - `input_handle_filter_block()` — CUTOFF / RESONANCE / ADSR2toVCF / LFO2toVCF; scale bake. Apply only, no forwarding.
   - **Called from:** `main_handle_filter_block()` and `input8_handle_filter_block()`, never registered directly.
   - **When:** DCO `'d'` or Input `'d'`.
 - `main_handle_filter_block()` — Apply via `input_handle_filter_block()`, then re-emit `'d'` on Serial8 so Input's pots follow a DCO-origin recall (parked in `mb_filter_forward_ring` when Serial8 is full).
   - **Called from:** Serial2 parser (USB/MIDI mirror, preset recall).
   - **When:** DCO `'d'` only — mirroring an Input-origin block would echo it back to its sender.
+- `mb_forward_block_to_input()` — `serial_frame_write` of one block frame on Serial8, dropped if there is no TX room. The envelope blocks skip the filter ring: they arrive on a recall or a host edit, never per encoder tick.
+  - **Called from:** `main_handle_adsr1/2/3()`.
+- `main_handle_adsr1()` / `main_handle_adsr2()` / `main_handle_adsr3()` — Apply via the plain handler, then relay to Input so the panel faders and the Screen follow a DCO-origin edit.
+  - **Called from:** Serial2 parser (these, not the plain handlers, are what `mainSerial2Commands[]` registers).
+  - **When:** DCO `'a'` / `'b'` / `'c'` only — same anti-echo rule as `'d'`.
 - `input_handle_param16()` — `decode_param_p` → `update_parameters` (PW=210, ADSR1→VCA=222).
   - **Called from:** Serial8 parser.
   - **When:** Input `'p'`.

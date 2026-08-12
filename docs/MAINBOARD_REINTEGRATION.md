@@ -69,13 +69,14 @@ Frames marked **relay** are not consumed by this board's DSP; they exist only be
 | `'e'` | AT, MW, PB u16 LE | Aftertouch, mod wheel, pitch bend (matrix sources) |
 | `'x'` | id + u32 LE | Gap 154 / cal 155 |
 | `'p'` | id + i16 LE | Persistable / AT helpers |
-| `'a'` | 8 B LE | USB/MIDI EnvVCA times (same as Input `'a'`) |
-| `'b'` | 8 B | USB/MIDI EnvVCF times (same as Input `'b'`) |
+| `'a'` | 8 B LE | USB/MIDI/preset EnvVCA times (same as Input `'a'`) — also **mirrored** to Input |
+| `'b'` | 8 B | USB/MIDI/preset EnvVCF times (same as Input `'b'`) — also **mirrored** to Input |
+| `'c'` | 8 B | EnvDCO times. No CV here; applied to the local copy and **mirrored** to Input |
 | `'d'` | 8 B | USB/MIDI CUTOFF, RESONANCE, ADSR2→VCF, LFO2→VCF — also **mirrored** to Input so recalls move the pots |
 | `'O'` | 17 B | Preset directory entry `[slot][name:16]` — **relay** to Input |
 | `'L'` | 1 B | Preset `[slot]` finished loading — **relay** to Input |
 
-DCO-origin `'a'`/`'b'`/`'d'` are **not** echoed back to the DCO, and only `'d'` is mirrored on to Input (from `main_handle_filter_block()`, the Serial2-only wrapper). `'c'` is not registered on Serial2: EnvDCO from the DCO side stays DCO-local.
+DCO-origin `'a'`–`'d'` are **not** echoed back to the DCO; they are applied here and mirrored on to Input by the Serial2-only wrappers (`main_handle_adsr1/2/3()`, `main_handle_filter_block()`).
 
 ### Mainboard → DCO (Serial2)
 

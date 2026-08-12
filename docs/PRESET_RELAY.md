@@ -99,18 +99,18 @@ filter settings.
 That is the only job of the `input8_*` wrappers: each calls the plain local
 handler (analog behaviour unchanged) and then `mb_forward_block_to_dco()`.
 
-Only the Serial8 side forwards to the DCO. The identical `'a'`/`'b'`/`'d'` frames
+Only the Serial8 side forwards to the DCO. The identical `'a'`–`'d'` frames
 registered in `mainSerial2Commands[]` come from the DCO itself (USB/MIDI edits,
-preset recalls), so nothing goes back to the DCO. `'c'` is not registered on
-Serial2 at all — EnvDCO from the DCO side stays DCO-local.
+preset recalls), so nothing goes back to the DCO.
 
-`'d'` is the one block that also travels DCO→Input, so that a preset recall moves
-the panel's filter pots. That mirror lives in `main_handle_filter_block()`, the
-Serial2-only wrapper, **not** in the shared `input_handle_filter_block()` apply
-function — keeping it out of the shared function is what stops an Input-origin
-filter edit from being echoed straight back to its sender. If Serial8 has no room
-the frame is parked in `mb_filter_forward_ring` (8 deep) and drained around the
-next Serial2 parse.
+Every block also travels DCO→Input, so that a recall or a host edit moves the
+panel's faders and pots and reaches the Screen. Those mirrors live in the
+Serial2-only wrappers `main_handle_adsr1/2/3()` and `main_handle_filter_block()`,
+**not** in the shared apply functions — keeping them out of the shared functions
+is what stops an Input-origin edit from being echoed straight back to its sender.
+`'d'` is parked in `mb_filter_forward_ring` (8 deep) when Serial8 has no room and
+drained around the next Serial2 parse; the envelope blocks take the plain
+drop-if-full path, since they never arrive per encoder tick.
 
 The two directions are deliberately asymmetric, and the pattern generalises: put
 the **apply** logic in a plain handler, and put each **forward** in the wrapper
