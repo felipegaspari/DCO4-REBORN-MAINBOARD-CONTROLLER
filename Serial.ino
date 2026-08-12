@@ -25,13 +25,14 @@ static void mb_filter_forward_ring_enqueue(const uint8_t* payload) {
 
 static void mb_filter_forward_ring_drain() {
 #ifdef ENABLE_SERIAL8
-  while (mb_filter_forward_ring_count > 0 && Serial8.availableForWrite() > 0) {
-    serial_frame_write(
-      Serial8,
-      INPUT_CMD_FILTER_BLOCK,
-      mb_filter_forward_ring[mb_filter_forward_ring_tail],
-      INPUT_SERIAL_LEN_FILTER_BLOCK
-    );
+  while (mb_filter_forward_ring_count > 0) {
+    if (!mb_write_frame(
+          Serial8,
+          INPUT_CMD_FILTER_BLOCK,
+          mb_filter_forward_ring[mb_filter_forward_ring_tail],
+          INPUT_SERIAL_LEN_FILTER_BLOCK)) {
+      break;
+    }
     mb_filter_forward_ring_tail = (uint8_t)((mb_filter_forward_ring_tail + 1u) % MB_FILTER_FORWARD_RING_CAP);
     mb_filter_forward_ring_count--;
   }
@@ -85,6 +86,7 @@ static void main_handle_param16(char, const uint8_t* payload, uint8_t len) {
   update_parameters(frame.id, (int16_t)frame.value);
   if (frame.id != PARAM_DEBUG_COMMAND) {
     serialSendParam16ToInput(frame.id, (int16_t)frame.value);
+    serialSendParam16ToScreen(frame.id, (int16_t)frame.value);
   }
 }
 
@@ -156,20 +158,31 @@ static void input_handle_filter_block(char, const uint8_t* payload, uint8_t len)
   cv_bake_lfo2_to_vcf_scale();
 }
 
-// Serial2 ('a'-'d' from the DCO): apply locally, then mirror to Input so a
-// preset recall or USB/MIDI edit moves the panel's faders and pots and reaches
-// the Screen. Only the DCO-origin path mirrors — forwarding an Input-origin
-// block back to Input would echo every panel edit straight to its sender.
+// Screen has no 'd' handler — filter pots are shown via UI-only 'p' ids.
+static void mb_send_filter_ui_to_screen(const uint8_t* payload) {
+  serialSendParam16ToScreen((uint8_t)PARAM_UI_CUTOFF,
+                            (int16_t)decode_u16_le(payload + 0));
+  serialSendParam16ToScreen((uint8_t)PARAM_UI_RESONANCE,
+                            (int16_t)decode_u16_le(payload + 2));
+  serialSendParam16ToScreen((uint8_t)PARAM_UI_ADSR2_TO_VCF,
+                            decode_i16_le(payload + 4));
+  serialSendParam16ToScreen((uint8_t)PARAM_UI_LFO2_TO_VCF,
+                            (int16_t)decode_u16_le(payload + 6));
+}
+
+// Serial2 ('a'-'d' from the DCO): apply locally, mirror to Input (panel locals
+// via Serial8 ring when busy), and drive the Screen on USART1. Only the
+// DCO-origin path mirrors back to Input — forwarding an Input-origin block
+// would echo every panel edit straight to its sender.
 static void main_handle_filter_block(char c, const uint8_t* payload, uint8_t len) {
   if (len != INPUT_SERIAL_LEN_FILTER_BLOCK) return;
   input_handle_filter_block(c, payload, len);
 #ifdef ENABLE_SERIAL8
-  if (Serial8.availableForWrite() > 0) {
-    serial_frame_write(Serial8, INPUT_CMD_FILTER_BLOCK, payload, INPUT_SERIAL_LEN_FILTER_BLOCK);
-  } else {
+  if (!mb_write_frame(Serial8, INPUT_CMD_FILTER_BLOCK, payload, INPUT_SERIAL_LEN_FILTER_BLOCK)) {
     mb_filter_forward_ring_enqueue(payload);
   }
 #endif
+  mb_send_filter_ui_to_screen(payload);
 }
 
 // The envelope blocks take the plain drop-if-full path rather than the filter
@@ -177,8 +190,23 @@ static void main_handle_filter_block(char c, const uint8_t* payload, uint8_t len
 // tick, so there is nothing to smooth out.
 static void mb_forward_block_to_input(uint8_t cmd, const uint8_t* payload, uint8_t len) {
 #ifdef ENABLE_SERIAL8
-  if (Serial8.availableForWrite() < 1) return;
-  serial_frame_write(Serial8, cmd, payload, len);
+  mb_write_frame(Serial8, cmd, payload, len);
+#endif
+}
+
+// Wire ADSR is exp-mapped; Screen bars expect linear 0..4095 (same as Input used
+// to send). Invert A/D/R for Serial1 only — Input still gets the wire payload.
+static void mb_forward_adsr_block_to_screen(uint8_t cmd, const uint8_t* payload) {
+#ifdef ENABLE_SERIAL1
+  uint8_t screen_payload[INPUT_SERIAL_LEN_ADSR_BLOCK];
+  encode_u16_le(screen_payload + 0, exp_to_lin_index(decode_u16_le(payload + 0)));
+  encode_u16_le(screen_payload + 2, exp_to_lin_index(decode_u16_le(payload + 2)));
+  encode_u16_le(screen_payload + 4, decode_u16_le(payload + 4));  // sustain is linear
+  encode_u16_le(screen_payload + 6, exp_to_lin_index(decode_u16_le(payload + 6)));
+  mb_write_frame(Serial1, cmd, screen_payload, INPUT_SERIAL_LEN_ADSR_BLOCK);
+#else
+  (void)cmd;
+  (void)payload;
 #endif
 }
 
@@ -186,12 +214,14 @@ static void main_handle_adsr1(char c, const uint8_t* payload, uint8_t len) {
   if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) return;
   input_handle_adsr1(c, payload, len);
   mb_forward_block_to_input(INPUT_CMD_ADSR1_BLOCK, payload, len);
+  mb_forward_adsr_block_to_screen(INPUT_CMD_ADSR1_BLOCK, payload);
 }
 
 static void main_handle_adsr2(char c, const uint8_t* payload, uint8_t len) {
   if (len != INPUT_SERIAL_LEN_ADSR_BLOCK) return;
   input_handle_adsr2(c, payload, len);
   mb_forward_block_to_input(INPUT_CMD_ADSR2_BLOCK, payload, len);
+  mb_forward_adsr_block_to_screen(INPUT_CMD_ADSR2_BLOCK, payload);
 }
 
 // EnvDCO drives the DCO's own engine; the Mainboard only keeps a copy and
@@ -202,6 +232,9 @@ static void main_handle_adsr3(char c, const uint8_t* payload, uint8_t len) {
   mb_forward_block_to_input(INPUT_CMD_ADSR3_BLOCK, payload, len);
 }
 
+// Panel-origin 'p': apply locally only. Input already sent the same edit to the
+// Screen over its own link, one hop instead of two, so echoing it here would
+// just double every toast. The DCO-origin direction is main_handle_param16.
 static void input_handle_param16(char, const uint8_t* payload, uint8_t len) {
   if (len != INPUT_SERIAL_LEN_PARAM_16) return;
   ParamFrame frame;
@@ -258,6 +291,17 @@ static void main_handle_preset_loaded(char, const uint8_t* payload, uint8_t len)
 #endif
 }
 
+// 's' DCO → Screen: a ScreenMode byte, nothing for this board to interpret. The
+// DCO brackets its preset-recall mirror with Silent/PresetScroll, so a dropped
+// end marker would leave the Screen suppressing toasts indefinitely — hence the
+// blocking write rather than mb_write_frame's drop-if-full, same as 'O' and 'L'.
+static void main_handle_screen_signal(char, const uint8_t* payload, uint8_t len) {
+  if (len != SERIAL_PAYLOAD_LEN_SCREEN_SIGNAL) return;
+#ifdef ENABLE_SERIAL1
+  serial_frame_write(Serial1, SERIAL_CMD_SCREEN_SIGNAL, payload, len);
+#endif
+}
+
 // --- panel block frames: apply here, and shadow them on the DCO -----------------
 //
 // The Mainboard owns the analog envelopes and filter, so it consumes 'a'-'d'
@@ -271,7 +315,7 @@ static void main_handle_preset_loaded(char, const uint8_t* payload, uint8_t len)
 // not be echoed back to it.
 static void mb_forward_block_to_dco(uint8_t cmd, const uint8_t* payload, uint8_t len) {
 #ifdef ENABLE_SERIAL2
-  serial_frame_write(Serial2, cmd, payload, len);
+  mb_write_frame(Serial2, cmd, payload, len);
 #endif
 }
 
@@ -309,6 +353,8 @@ static const SerialCommandDef mainSerial2Commands[] = {
   // Preset store answers, relayed on to Input.
   { INPUT_CMD_PRESET_DIR_ENTRY, INPUT_SERIAL_LEN_PRESET_DIR_ENTRY, main_handle_preset_dir_entry },
   { INPUT_CMD_PRESET_LOADED,    INPUT_SERIAL_LEN_PRESET_LOADED,    main_handle_preset_loaded },
+  // Screen mode marker, relayed on to the Screen.
+  { SERIAL_CMD_SCREEN_SIGNAL,   SERIAL_PAYLOAD_LEN_SCREEN_SIGNAL,  main_handle_screen_signal },
 };
 
 static const SerialCommandDef inputSerial8Commands[] = {

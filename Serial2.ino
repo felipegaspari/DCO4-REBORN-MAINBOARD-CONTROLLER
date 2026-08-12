@@ -1,3 +1,12 @@
+bool mb_write_frame(Uart& port, uint8_t cmd, const uint8_t* payload, uint8_t len) {
+  uint8_t buf[SERIAL_STUFFED_MAX];
+  const int n = serial_frame_stuff(cmd, payload, len, buf, sizeof(buf));
+  if (n <= 0) return false;
+  if (port.availableForWrite() < n) return false;
+  port.write(buf, (size_t)n);
+  return true;
+}
+
 static void serial_send_mod_stream() {
 #if defined(ENABLE_SERIAL2) && defined(ENABLE_MB_MOD_STREAM)
   uint8_t payload[SERIAL_PAYLOAD_LEN_MOD_STREAM];
@@ -19,7 +28,7 @@ void serialSendParamToDCO(uint8_t id, int16_t value) {
 #ifdef ENABLE_SERIAL2
   uint8_t payload[INPUT_SERIAL_LEN_PARAM_16];
   encode_param_p(payload, id, value);
-  serial_frame_write(Serial2, SERIAL_CMD_PARAM_16, payload, INPUT_SERIAL_LEN_PARAM_16);
+  mb_write_frame(Serial2, SERIAL_CMD_PARAM_16, payload, INPUT_SERIAL_LEN_PARAM_16);
 #endif
 }
 
@@ -27,7 +36,7 @@ void serialSendParam32ToDCO(uint8_t id, uint32_t value) {
 #ifdef ENABLE_SERIAL2
   uint8_t payload[INPUT_SERIAL_LEN_PARAM_32];
   encode_param32(payload, id, value);
-  serial_frame_write(Serial2, SERIAL_CMD_PARAM_32, payload, INPUT_SERIAL_LEN_PARAM_32);
+  mb_write_frame(Serial2, SERIAL_CMD_PARAM_32, payload, INPUT_SERIAL_LEN_PARAM_32);
 #endif
 }
 
@@ -35,7 +44,7 @@ void serialSendParam32ToInput(uint8_t id, uint32_t value) {
 #ifdef ENABLE_SERIAL8
   uint8_t payload[INPUT_SERIAL_LEN_PARAM_32];
   encode_param32(payload, id, value);
-  serial_frame_write(Serial8, INPUT_CMD_PARAM_32, payload, INPUT_SERIAL_LEN_PARAM_32);
+  mb_write_frame(Serial8, INPUT_CMD_PARAM_32, payload, INPUT_SERIAL_LEN_PARAM_32);
 #endif
 }
 
@@ -43,7 +52,18 @@ void serialSendParam16ToInput(uint8_t id, int16_t value) {
 #ifdef ENABLE_SERIAL8
   uint8_t payload[INPUT_SERIAL_LEN_PARAM_16];
   encode_param_p(payload, id, value);
-  serial_frame_write(Serial8, INPUT_CMD_PARAM_16, payload, INPUT_SERIAL_LEN_PARAM_16);
+  mb_write_frame(Serial8, INPUT_CMD_PARAM_16, payload, INPUT_SERIAL_LEN_PARAM_16);
+#endif
+}
+
+void serialSendParam16ToScreen(uint8_t id, int16_t value) {
+#ifdef ENABLE_SERIAL1
+  uint8_t payload[INPUT_SERIAL_LEN_PARAM_16];
+  encode_param_p(payload, id, value);
+  mb_write_frame(Serial1, INPUT_CMD_PARAM_16, payload, INPUT_SERIAL_LEN_PARAM_16);
+#else
+  (void)id;
+  (void)value;
 #endif
 }
 
@@ -51,7 +71,7 @@ void serialSendParam32ToScreen(uint8_t id, uint32_t value) {
 #ifdef ENABLE_SERIAL1
   uint8_t payload[INPUT_SERIAL_LEN_PARAM_32];
   encode_param32(payload, id, value);
-  serial_frame_write(Serial1, INPUT_CMD_PARAM_32, payload, INPUT_SERIAL_LEN_PARAM_32);
+  mb_write_frame(Serial1, INPUT_CMD_PARAM_32, payload, INPUT_SERIAL_LEN_PARAM_32);
 #endif
 }
 

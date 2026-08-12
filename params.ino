@@ -79,6 +79,8 @@ static void apply_param_sub_level(int16_t v) {
 
 static void apply_param_calibration_value(int16_t /*v*/) {}
 static void apply_param_voice_mode(int16_t v) { voiceMode = (uint8_t)v; forward_dco(PARAM_VOICE_MODE, v); }
+// Allocation is entirely the DCO's job; the Mainboard only relays the setting.
+static void apply_param_voice_alloc_mode(int16_t v) { forward_dco(PARAM_VOICE_ALLOC_MODE, v); }
 static void apply_param_unison_detune(int16_t v) { unisonDetune = v; forward_dco(PARAM_UNISON_DETUNE, v); }
 
 static void apply_param_analog_drift_amount(int16_t v) {
@@ -274,6 +276,7 @@ static const ParamDescriptorT<int16_t> paramTable[] = {
   { PARAM_SUB_LEVEL, apply_param_sub_level },
   { PARAM_CALIBRATION_VALUE, apply_param_calibration_value },
   { PARAM_VOICE_MODE, apply_param_voice_mode },
+  { PARAM_VOICE_ALLOC_MODE, apply_param_voice_alloc_mode },
   { PARAM_UNISON_DETUNE, apply_param_unison_detune },
   { PARAM_ANALOG_DRIFT_AMOUNT, apply_param_analog_drift_amount },
   { PARAM_ANALOG_DRIFT_SPEED, apply_param_analog_drift_speed },
