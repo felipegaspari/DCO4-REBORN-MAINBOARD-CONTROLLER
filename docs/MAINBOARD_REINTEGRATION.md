@@ -16,7 +16,7 @@ flowchart LR
   Input -->|"Serial1 GP0/1"| Screen["Screen RP2040"]
   MB -->|"Serial1 PA9/PA10"| Screen
   MB -->|"Serial8 PE0/PE1"| Input
-  MB --> Analog["4x VCA + 4x VCF + reso PWM\nMCP4728 SQR/Sub\n74HC595 waves"]
+  MB --> Analog["4x VCA + 4x VCF + reso PWM\nMCP4728 osc/sub levels\n74HC595 waves"]
 ```
 
 | Port | Pins | Peer |
@@ -38,7 +38,7 @@ flowchart LR
 | Panel, Screen UI frames, RAM cache of the 256 slot **names** | Input |
 | LVGL UI | Screen |
 
-OSC3 ParamIds (33–35, 38, 87–89) stay in the enum. Analog 4×2 has SQR1 / SQR2 / Sub only — OSC3 level dest is a no-op. Dist 52–53 is stored/stubbed.
+OSC3 ParamIds (33–35, 38, 87–89) stay in the enum. Analog 4×2 has OSC A / OSC B / Sub levels only — OSC3 level dest is a no-op. Dist 52–53 is stored/stubbed.
 
 ---
 

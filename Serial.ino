@@ -27,7 +27,7 @@ static void mb_filter_forward_ring_drain() {
 #ifdef ENABLE_SERIAL8
   while (mb_filter_forward_ring_count > 0) {
     if (!mb_write_frame(
-          Serial8,
+          InputDma,
           INPUT_CMD_FILTER_BLOCK,
           mb_filter_forward_ring[mb_filter_forward_ring_tail],
           INPUT_SERIAL_LEN_FILTER_BLOCK)) {
@@ -178,7 +178,7 @@ static void main_handle_filter_block(char c, const uint8_t* payload, uint8_t len
   if (len != INPUT_SERIAL_LEN_FILTER_BLOCK) return;
   input_handle_filter_block(c, payload, len);
 #ifdef ENABLE_SERIAL8
-  if (!mb_write_frame(Serial8, INPUT_CMD_FILTER_BLOCK, payload, INPUT_SERIAL_LEN_FILTER_BLOCK)) {
+  if (!mb_write_frame(InputDma, INPUT_CMD_FILTER_BLOCK, payload, INPUT_SERIAL_LEN_FILTER_BLOCK)) {
     mb_filter_forward_ring_enqueue(payload);
   }
 #endif
@@ -190,7 +190,7 @@ static void main_handle_filter_block(char c, const uint8_t* payload, uint8_t len
 // tick, so there is nothing to smooth out.
 static void mb_forward_block_to_input(uint8_t cmd, const uint8_t* payload, uint8_t len) {
 #ifdef ENABLE_SERIAL8
-  mb_write_frame(Serial8, cmd, payload, len);
+  mb_write_frame(InputDma, cmd, payload, len);
 #endif
 }
 
@@ -203,7 +203,7 @@ static void mb_forward_adsr_block_to_screen(uint8_t cmd, const uint8_t* payload)
   encode_u16_le(screen_payload + 2, exp_to_lin_index(decode_u16_le(payload + 2)));
   encode_u16_le(screen_payload + 4, decode_u16_le(payload + 4));  // sustain is linear
   encode_u16_le(screen_payload + 6, exp_to_lin_index(decode_u16_le(payload + 6)));
-  mb_write_frame(Serial1, cmd, screen_payload, INPUT_SERIAL_LEN_ADSR_BLOCK);
+  mb_write_frame(ScreenDma, cmd, screen_payload, INPUT_SERIAL_LEN_ADSR_BLOCK);
 #else
   (void)cmd;
   (void)payload;
@@ -249,7 +249,7 @@ static void input_handle_preset_name(char, const uint8_t* payload, uint8_t len) 
   if (len != INPUT_SERIAL_LEN_PRESET_NAME) return;
   for (uint8_t i = 0; i < INPUT_SERIAL_LEN_PRESET_NAME; i++) presetName[i] = payload[i];
 #ifdef ENABLE_SERIAL2
-  serial_frame_write(Serial2, INPUT_CMD_PRESET_NAME, payload, INPUT_SERIAL_LEN_PRESET_NAME);
+  mb_write_frame_blocking(DcoDma, INPUT_CMD_PRESET_NAME, payload, INPUT_SERIAL_LEN_PRESET_NAME);
 #endif
 }
 
@@ -262,15 +262,15 @@ static void input_handle_preset_name(char, const uint8_t* payload, uint8_t len) 
 // Writes go straight out rather than through mb_filter_forward_ring: a directory
 // push is 256 back-to-back 'O' frames and dropping any of them would leave a
 // wrong name in Input's cache. Both links run at 2.5 Mbaud, so the Mainboard
-// forwards at exactly the rate it receives and the 512-byte TX buffer absorbs
-// the jitter; it is a one-shot on Input boot / browse-mode-enter, never a
+// forwards at exactly the rate it receives and the DMA ping-pong (256+256)
+// absorbs the jitter; it is a one-shot on Input boot / browse-mode-enter, never a
 // per-encoder-tick path.
 
 // 'N' Input → DCO: "send me the whole directory".
 static void input_handle_preset_dir_request(char, const uint8_t* payload, uint8_t len) {
   if (len != INPUT_SERIAL_LEN_PRESET_DIR_REQUEST) return;
 #ifdef ENABLE_SERIAL2
-  serial_frame_write(Serial2, INPUT_CMD_PRESET_DIR_REQUEST, payload, len);
+  mb_write_frame_blocking(DcoDma, INPUT_CMD_PRESET_DIR_REQUEST, payload, len);
 #endif
 }
 
@@ -278,7 +278,7 @@ static void input_handle_preset_dir_request(char, const uint8_t* payload, uint8_
 static void main_handle_preset_dir_entry(char, const uint8_t* payload, uint8_t len) {
   if (len != INPUT_SERIAL_LEN_PRESET_DIR_ENTRY) return;
 #ifdef ENABLE_SERIAL8
-  serial_frame_write(Serial8, INPUT_CMD_PRESET_DIR_ENTRY, payload, len);
+  mb_write_frame_blocking(InputDma, INPUT_CMD_PRESET_DIR_ENTRY, payload, len);
 #endif
 }
 
@@ -287,7 +287,7 @@ static void main_handle_preset_dir_entry(char, const uint8_t* payload, uint8_t l
 static void main_handle_preset_loaded(char, const uint8_t* payload, uint8_t len) {
   if (len != INPUT_SERIAL_LEN_PRESET_LOADED) return;
 #ifdef ENABLE_SERIAL8
-  serial_frame_write(Serial8, INPUT_CMD_PRESET_LOADED, payload, len);
+  mb_write_frame_blocking(InputDma, INPUT_CMD_PRESET_LOADED, payload, len);
 #endif
 }
 
@@ -298,7 +298,16 @@ static void main_handle_preset_loaded(char, const uint8_t* payload, uint8_t len)
 static void main_handle_screen_signal(char, const uint8_t* payload, uint8_t len) {
   if (len != SERIAL_PAYLOAD_LEN_SCREEN_SIGNAL) return;
 #ifdef ENABLE_SERIAL1
-  serial_frame_write(Serial1, SERIAL_CMD_SCREEN_SIGNAL, payload, len);
+  mb_write_frame_blocking(ScreenDma, SERIAL_CMD_SCREEN_SIGNAL, payload, len);
+#endif
+}
+
+// Screen 'q' [slot][name:16] from a DCO preset load. USART1 only — Serial8's
+// 'q' is the 16-byte save-name frame from Input.
+static void main_handle_preset_scroll(char, const uint8_t* payload, uint8_t len) {
+  if (len != SERIAL_PAYLOAD_LEN_SCREEN_PRESET_SCROLL) return;
+#ifdef ENABLE_SERIAL1
+  mb_write_frame_blocking(ScreenDma, (uint8_t)'q', payload, len);
 #endif
 }
 
@@ -315,7 +324,7 @@ static void main_handle_screen_signal(char, const uint8_t* payload, uint8_t len)
 // not be echoed back to it.
 static void mb_forward_block_to_dco(uint8_t cmd, const uint8_t* payload, uint8_t len) {
 #ifdef ENABLE_SERIAL2
-  mb_write_frame(Serial2, cmd, payload, len);
+  mb_write_frame(DcoDma, cmd, payload, len);
 #endif
 }
 
@@ -353,8 +362,9 @@ static const SerialCommandDef mainSerial2Commands[] = {
   // Preset store answers, relayed on to Input.
   { INPUT_CMD_PRESET_DIR_ENTRY, INPUT_SERIAL_LEN_PRESET_DIR_ENTRY, main_handle_preset_dir_entry },
   { INPUT_CMD_PRESET_LOADED,    INPUT_SERIAL_LEN_PRESET_LOADED,    main_handle_preset_loaded },
-  // Screen mode marker, relayed on to the Screen.
+  // Screen mode marker and preset scroll, relayed on to the Screen.
   { SERIAL_CMD_SCREEN_SIGNAL,   SERIAL_PAYLOAD_LEN_SCREEN_SIGNAL,  main_handle_screen_signal },
+  { (uint8_t)'q', SERIAL_PAYLOAD_LEN_SCREEN_PRESET_SCROLL, main_handle_preset_scroll },
 };
 
 static const SerialCommandDef inputSerial8Commands[] = {

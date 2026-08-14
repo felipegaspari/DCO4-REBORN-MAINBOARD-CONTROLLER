@@ -32,8 +32,8 @@ All detailed documentation lives under **[`docs/`](docs/)**. This README is the 
 ## Features
 
 - **Modulation:** EnvVCA / EnvVCF / EnvDCO ×4 (Q15 Bézier); LFO1 / LFO2 (`getWaveQ15`); VCF drift LFOs; 8-slot mod matrix.
-- **CV outs:** Resonance, cutoff, VCA via STM32 timer PWM (`update_CV_outs`); SQR1/SQR2/Sub via three MCP4728 DACs. ADSR depths `/512`, LFO `/1024` + negative LFO polarity; AS2164 Bézier + reso→VCA lerp.
-- **Wave select:** Dual 74HC595 (OSC1 saw/tri, OSC2 saw/pulse on sinePins cabling).
+- **CV outs:** Resonance, cutoff, VCA via STM32 timer PWM (`update_CV_outs`); OSC A / OSC B / Sub levels via three MCP4728 DACs (one channel per voice per oscillator plus one per sub, each carrying that oscillator's whole wave mix). ADSR depths `/512`, LFO `/1024` + negative LFO polarity; AS2164 Bézier + reso→VCA lerp.
+- **Wave select:** Dual 74HC595 (OSC1 saw/tri, OSC2 saw/pulse on `osc2PulsePins` cabling).
 - **Serial:** 2.5 Mbaud slim LE — DCO Serial2 (`'n'`/`'o'`/`'e'`/`'m'`/`'p'`/`'x'`/`'t'` plus the `'a'`/`'b'`/`'d'` mirror and `'O'`/`'L'`), Input Serial8 (`'a'`–`'d'`/`'p'`/`'q'`/`'N'`), Screen Serial1 optional; USB debug @ 2 Mbaud.
 - **Params:** 256-entry jump table, `int16_t` apply; DCO-owned IDs forwarded, including preset / cal commands 170–173.
 - **Preset relay:** `'q'` / `'N'` and panel `'a'`–`'d'` on to the DCO, `'O'` / `'L'` back to Input — per command byte, no generic pass-through.
@@ -101,7 +101,7 @@ Sketchbook / core libs (not under `_build_libs`): `MCP4728_multiaddress`, `Wire`
 | `ENABLE_SPI` | **off** | SPI / BU2505 path |
 | `ENABLE_SERIAL*` | **on** (`Serial.h`) | Per-UART compile-in |
 | `ENABLE_SCREEN` | **off** | Legacy; `Screen.h` no longer exists |
-| `RUNNING_AVERAGE` | **on** (main sketch) | Slim `bench.h` profiler; dco_control opcodes 40/41/42 |
+| `RUNNING_AVERAGE` | **on** (main sketch) | Slim `bench.h` profiler; dco_control 40/41/42 + dump-once 45 |
 | `MB_UART_PROBE` | **off** (main sketch) | 1 Hz `'t'` labels on Serial/1/2/8; dco_control Board shows `mb s2` if DCO is on USART2 PD5. Desyncs Input/Screen if plugged in. |
 | `MB_UART_RX_LOG` | **off** (main sketch) | USB CDC one line per UART cmd byte on Serial2/8 (`mb s2 rx 'n'`, unknown `'m'` included); `'p'` also prints id/value. Serial1: `mb s1 rx N`. Watch STM32 USB @ 2 Mbaud, not dco_control. |
 | `ENABLE_MB_MOD_STREAM` | **off** (main sketch) | MB→DCO `'m'` @ 1 kHz. Also define on DCO to consume it. Leave off until pitch cutover. |

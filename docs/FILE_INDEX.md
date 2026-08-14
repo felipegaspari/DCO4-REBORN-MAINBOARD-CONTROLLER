@@ -40,6 +40,7 @@ flowchart TD
   setupFn --> initWave["init_waveSelector"]
   setupFn --> initMcp["init_MCP4728"]
   setupFn --> uartBegin["Serial / Serial1 / Serial2 / Serial8 begin"]
+  setupFn --> dmaInit["serial_dma_init"]
   setupFn --> initCv["init_cv_out / init_param_router / init_serial_parsers"]
 
   loopFn --> millis["millisTimer()"]
@@ -53,6 +54,7 @@ flowchart TD
   loopFn --> pwmBranch{"manualCalibrationFlag?"}
   pwmBranch -->|false| pwm["update_CV_outs"]
   pwmBranch -->|true| pwmMan["update_CV_outs_manual_calibration"]
+  loopFn --> dmaPoll["serial_dma_poll"]
 
   rs2 --> handlers2["main_handle_* → notes / expression / update_parameters"]
   rs18 --> handlers8["input8_* / input_handle_* → ADSR/filter / update_parameters"]
@@ -87,11 +89,11 @@ flowchart TD
 Main sketch: single-core `setup`/`loop`, UART bring-up, soft-timer scheduling, ADSR/LFO/PWM hot path.
 
 **Functions**
-- `setup()` — Init aux, hardware PWM timers, LFOs + drift LFOs, ADSR, `init_cv_out`, jump-table router, serial parsers, wave mux, MCP4728; open Serial/1/2/8.
+- `setup()` — Init aux, hardware PWM timers, LFOs + drift LFOs, ADSR, `init_cv_out`, jump-table router, serial parsers, wave mux, MCP4728; open Serial/1/2/8; `serial_dma_init()`.
   - **Called from:** Arduino framework.
   - **When:** Boot once.
   - Notes: `initScreen` / `init_BU2505FV` / `initEEPROM` / `initAutotune` call sites are commented or `#ifdef`-gated off.
-- `loop()` — Soft timers; ~223 µs Serial1+8; always Serial2; 1 ms drift + `'m'` TX; LFO1/2; ADSR; `update_CV_outs` (play vs manual-cal).
+- `loop()` — Soft timers; ~223 µs Serial1+8; always Serial2; 1 ms drift + `'m'` TX; LFO1/2; ADSR; `update_CV_outs` (play vs manual-cal); `serial_dma_poll()`.
   - **Called from:** Arduino framework.
   - **When:** Forever.
 - `print_mainboard_loop_timings()` — Print RunningAverage loop section averages to USB Serial.
@@ -122,7 +124,7 @@ Canonical `enum ParamId` superset, byte-identical on every board of both project
 
 ### `Serial.h`
 
-UART instances + enable macros (`ENABLE_SERIAL`, `ENABLE_SERIAL1`, `ENABLE_SERIAL2`, `ENABLE_SERIAL8`), RX/TX pin defines, TX prototypes, and `SERIAL_INNER_MAX_PAYLOAD 17` — set before `serial_frame.h` is included, sized by the relayed `'O'` frame. **No function definitions.**
+UART instances + enable macros (`ENABLE_SERIAL`, `ENABLE_SERIAL1`, `ENABLE_SERIAL2`, `ENABLE_SERIAL8`), RX/TX pin defines, TX prototypes, DMA TX wrappers (`mb_write_frame` / `mb_write_frame_blocking`), and `SERIAL_INNER_MAX_PAYLOAD 17` — set before `serial_frame.h` is included, sized by the relayed `'O'` frame. **No function definitions.**
 
 ### `Serial.ino`
 
@@ -165,7 +167,7 @@ Inbound parsers: Serial1 (stub), Serial2 (DCO), Serial8 (Input). Also holds both
 - `main_handle_filter_block()` — Apply via `input_handle_filter_block()`, then re-emit `'d'` on Serial8 so Input's pots follow a DCO-origin recall (parked in `mb_filter_forward_ring` when Serial8 is full).
   - **Called from:** Serial2 parser (USB/MIDI mirror, preset recall).
   - **When:** DCO `'d'` only — mirroring an Input-origin block would echo it back to its sender.
-- `mb_forward_block_to_input()` — `serial_frame_write` of one block frame on Serial8, dropped if there is no TX room. The envelope blocks skip the filter ring: they arrive on a recall or a host edit, never per encoder tick.
+- `mb_forward_block_to_input()` — `mb_write_frame` of one block frame on InputDma, dropped if there is no TX room. The envelope blocks skip the filter ring: they arrive on a recall or a host edit, never per encoder tick.
   - **Called from:** `main_handle_adsr1/2/3()`.
 - `main_handle_adsr1()` / `main_handle_adsr2()` / `main_handle_adsr3()` — Apply via the plain handler, then relay to Input so the panel faders and the Screen follow a DCO-origin edit.
   - **Called from:** Serial2 parser (these, not the plain handlers, are what `mainSerial2Commands[]` registers).
@@ -185,7 +187,7 @@ Inbound parsers: Serial1 (stub), Serial2 (DCO), Serial8 (Input). Also holds both
 - `main_handle_preset_loaded()` — Relay `'L'` `[slot]` DCO → Input.
   - **Called from:** Serial2 parser.
   - **When:** The DCO finished a load (boot recall, MIDI PC, `dco_control`, or Input).
-- `mb_forward_block_to_dco()` — `serial_frame_write` of one block frame on Serial2.
+- `mb_forward_block_to_dco()` — `mb_write_frame` of one block frame on DcoDma.
   - **Called from:** the four `input8_*` wrappers.
   - **When:** Any Input-origin `'a'`–`'d'`.
 - `input8_handle_adsr1()` / `input8_handle_adsr2()` / `input8_handle_adsr3()` / `input8_handle_filter_block()` — Call the plain local handler, then shadow the frame on the DCO so its preset records hold current envelope/filter values.
@@ -206,6 +208,12 @@ Inbound parsers: Serial1 (stub), Serial2 (DCO), Serial8 (Input). Also holds both
 Outbound frames to DCO / Screen / Input.
 
 **Functions**
+- `mb_write_frame(UartDmaTx&, …)` — Stuff one frame and queue it on a DMA engine; returns false if the ping-pong fill buffer cannot take it.
+  - **Called from:** param/block forwards, filter ring drain.
+  - **When:** Drop-if-full TX.
+- `mb_write_frame_blocking(UartDmaTx&, …)` — Same stuff, spin-poll until the DMA engine accepts the frame.
+  - **Called from:** preset `'q'`/`'N'`/`'O'`/`'L'` and screen `'s'`.
+  - **When:** Must-not-drop relay.
 - `serial_send_mod_stream()` / `sendSerial()` — TX `'m'` (LFO1/2 Q15 + EnvDCO Q15×4 + matrix pitch Q24); body only under `ENABLE_MB_MOD_STREAM`.
   - **Called from:** `loop()` when `timer1msFlag`.
   - **When:** Soft timer ~1 ms.
@@ -223,11 +231,29 @@ Outbound frames to DCO / Screen / Input.
 - `serialSendParam16ToInput(uint8_t, int16_t)` — `'p'` persistable mirror to Input.
   - **Called from:** `main_handle_param16()`, for every id except `PARAM_DEBUG_COMMAND`.
   - **When:** DCO `'p'` — this is how a preset recall reaches the panel.
-- `serial_send_bench_text_on(Stream&, …)` / `serial_send_bench_text_chunk()` — `'t'` ASCII chunk.
+- `serial_send_bench_text_on(UartDmaTx&, …)` / `serial_send_bench_text_chunk()` — `'t'` ASCII chunk.
   - **Called from:** `bench.h` dumps; `mb_uart_probe_poll()`.
   - **When:** Bench dump / `MB_UART_PROBE`.
 - `mb_uart_probe_poll()` — 1 Hz `'t'` labels on every UART.
   - **Called from:** `loop()` when `timer1msFlag`; no-op inline unless `MB_UART_PROBE`.
+
+### `serial_dma.h` / `serial_dma.ino`
+
+STM32H750 UART TX DMA for Serial1 (Screen / USART1), Serial2 (DCO / USART2), and Serial8 (Input / UART8). Ping-pong 256 B per engine, DMA1 streams 0–2 paced by DMAMUX. Stream3 is I2C1 TX for MCP4728. RX stays on stm32duino IRQ; USB CDC is unchanged. Do not `Serial1/2/8.write()` after `serial_dma_init()`.
+
+**Functions**
+- `serial_dma_init()` — Enable DMA1 clock, attach one stream per UART, set `USART_CR3_DMAT`, disable UART TX IRQs.
+  - **Called from:** `setup()` after the three `begin()` calls.
+  - **When:** Boot once.
+- `serial_dma_poll()` — If a stream finished, kick the other ping-pong buffer.
+  - **Called from:** `loop()` every iteration; also from `UartDmaTx::write`.
+  - **When:** Every `loop`.
+- `UartDmaTx::write()` — Copy into the fill buffer; drop if both slots are full.
+  - **Called from:** `mb_write_frame`, `serial_frame_write`.
+- `UartDmaTx::write_blocking()` — Spin-poll until `write()` accepts.
+  - **Called from:** `mb_write_frame_blocking`.
+- `UartDmaTx::availableForWrite()` — Free bytes in the current fill buffer.
+  - **Called from:** `bench_out_drain_t_chunk()`.
 
 ### `param_router.h`
 
@@ -315,7 +341,7 @@ Central param router (`int16_t` values) and the 256-entry apply jump table.
 | `apply_param_manual_calibration_offset_from_dco` | **No-op** — same, forwarded to Input by `main_handle_param32` |
 | `apply_param_manual_calibration_store` | Forward store edge to DCO |
 | `apply_param_preset_save` (170) / `apply_param_preset_load` (171) / `apply_param_preset_dump` (172) / `apply_param_cal_dump` (173) | Pure `forward_dco` — the DCO owns the preset store, this board keeps no preset state. See [`PRESET_RELAY.md`](PRESET_RELAY.md) |
-| `apply_param_debug_command` | 40/41/42 → local `bench_*`; anything else forwarded to DCO |
+| `apply_param_debug_command` | 40/41/42/45 → local `bench_*`; 43/44 MCP probe/reattach; anything else forwarded to DCO |
 
 ### `serial_parser.h`
 
@@ -453,7 +479,7 @@ LFO classes, drift LFOs, modulation globals. Declares `LFO3()` but **no definiti
 ### `PWM.ino`
 
 **Functions**
-- `mcpUpdate()` — Push SQR1/SQR2/Sub levels to three MCP4728 chips.
+- `mcpUpdate()` — Push the OSC1 / OSC2 / Sub levels to three MCP4728 chips. The chips have one channel per voice per oscillator (plus one per sub), but the same `OSC1Level` / `OSC2Level` / `SubLevel` goes to all four voices; a level is the whole oscillator, all of its waves at once.
   - **Called from:** `apply_param_osc1_level` / `_osc2_level` / `_sub_level`; `update_CV_outs` / `update_CV_outs_manual_calibration`.
   - **When:** Param / CV tick / manual-cal.
 
@@ -463,7 +489,7 @@ LFO classes, drift LFOs, modulation globals. Declares `LFO3()` but **no definiti
 - `update_CV_outs()` — Q15 VCA/VCF/reso math + matrix; write hardware timer compare registers.
   - **Called from:** `loop()` when `manualCalibrationFlag == false`.
   - **When:** Hot path (play).
-- `update_CV_outs_manual_calibration()` — Mute mux / park VCA / force SQR for current cal stage.
+- `update_CV_outs_manual_calibration()` — Solo mux / open that voice's VCA+filter, mute the other three; the calibrated oscillator's level stays open on every substage (it carries that oscillator's saw, tri and pulse together), the other oscillator of the pair and all subs are muted. The A pulse has no switch and no level of its own: only the DCO's PW CV can silence it.
   - **Called from:** `loop()` when `manualCalibrationFlag == true`.
   - **When:** Manual-cal hot path.
 
@@ -481,12 +507,24 @@ LFO classes, drift LFOs, modulation globals. Declares `LFO3()` but **no definiti
   - **Called from:** `apply_param_osc1_saw_enable` / `_osc1_tri_enable` / `_osc2_saw_enable` / `_osc2_pulse_enable` / `_osc2_tri_enable` (cases 0, 2, 3). Case 4 has no live caller.
   - **When:** Param table.
 
-### `MCP4728.ino`
+### `MCP4728.ino` / `mcp_i2c_dma.cpp`
 
 **Functions**
-- `init_MCP4728()` — Wire @ 1 MHz; attach three MCP4728; write 4095 to all channels.
+- `init_MCP4728()` — Wire @ 1 MHz; if `MCP_I2C_DMA` attach I2C1 TX DMA (DMA1 Stream3); attach three MCP4728; write 4095 to all channels.
   - **Called from:** `setup()`.
-  - **When:** Boot.
+  - **When:** Boot. Flag lives in `MAINBOARD-CONTROLLER.ino` (`0` = IT, `1` = DMA).
+- `mcp_i2c_dma_init()` — DMA1 Stream3, `DMA_REQUEST_I2C1_TX`, link to Wire's `hdmatx`, enable the stream IRQ. Compiled only if `MCP_I2C_DMA`.
+  - **Called from:** `init_MCP4728()` after `Wire.begin()`.
+  - **When:** Boot (`MCP_I2C_DMA == 1`).
+- `mcp_async_write()` — 8-byte fast-write: `HAL_I2C_Master_Transmit_IT` when `MCP_I2C_DMA == 0`; `Transmit_DMA` + D-cache clean when `1`.
+  - **Called from:** staggered `mcpUpdate()`.
+  - **When:** CV loop, one chip every ≥120 µs.
+- `mcp_i2c_idle()` / `mcp_i2c_wait_idle()` — HAL I2C READY check; bounded wait for boot/cal `analogWrite`.
+  - **Called from:** `mcpUpdate()`, `mcp_async_write()`, boot/cal path.
+  - **When:** Before each chip write; blocking wait only on analogWrite.
+- `DMA1_Stream3_IRQHandler()` — `HAL_DMA_IRQHandler` for I2C TX complete (C linkage, in `mcp_i2c_dma.cpp`). NVIC enabled only when `MCP_I2C_DMA == 1`.
+  - **Called from:** NVIC.
+  - **When:** Each MCP4728 DMA TX complete.
 
 ### `tables.h`
 
@@ -634,7 +672,7 @@ All detailed docs live under `docs/` (this file included). Root `README.md` is t
 | ADSR timing / curves | `ADSR.ino`; curves via params 48–51 |
 | LFO rate / shape | `LFO.ino` + `apply_param_lfo*_speed/waveform` |
 | Wave select (analog mux) | `waveSelector.ino` / `apply_param_*_status` |
-| SQR/Sub DAC levels | `mcpUpdate()` + `apply_param_sqr*_level` / `sub_level` |
+| Oscillator / sub DAC levels | `mcpUpdate()` + `apply_param_osc1_level` / `_osc2_level` / `_sub_level` |
 | Soft timer rates | `Timers_millis.ino` |
 | Hardware PWM pins | `Timers.h` + `init_timers()` |
 | Manual calibration CV path | `apply_param_manual_calibration_*` → `update_CV_outs_manual_calibration` |

@@ -68,19 +68,31 @@ void write_cv_pwm() {
   htim3->setCaptureCompare(3, VCA_PWM[3], TICK_COMPARE_FORMAT);
 }
 
-void write_cv_pwm_manual_calibration(uint8_t voice, uint16_t vca) {
+void write_cv_pwm_manual_calibration(uint8_t voice) {
+  // AS2164 / inverted VCF: PWM 0 = open, PWM 4095 = mute/closed. Play-path
+  // full envelope lands around 100; cal opens the soloed voice fully.
+  static constexpr uint16_t CAL_VCA_OPEN = 0;
+  static constexpr uint16_t CAL_VCA_MUTED = 4095;
+  static constexpr uint16_t CAL_VCF_OPEN = 0;
+  static constexpr uint16_t CAL_VCF_CLOSED = 4095;
+
   htim4->setCaptureCompare(1, 0, TICK_COMPARE_FORMAT);
   htim8->setCaptureCompare(1, 0, TICK_COMPARE_FORMAT);
   htim5->setCaptureCompare(1, 0, TICK_COMPARE_FORMAT);
   htim3->setCaptureCompare(1, 0, TICK_COMPARE_FORMAT);
 
-  htim12->setCaptureCompare(1, 0, TICK_COMPARE_FORMAT);
-  htim4->setCaptureCompare(3, 0, TICK_COMPARE_FORMAT);
-  htim15->setCaptureCompare(2, 0, TICK_COMPARE_FORMAT);
-  htim5->setCaptureCompare(3, 0, TICK_COMPARE_FORMAT);
+  uint16_t vcf_v[4] = { CAL_VCF_CLOSED, CAL_VCF_CLOSED, CAL_VCF_CLOSED, CAL_VCF_CLOSED };
+  uint16_t vca_v[4] = { CAL_VCA_MUTED, CAL_VCA_MUTED, CAL_VCA_MUTED, CAL_VCA_MUTED };
+  if (voice < 4) {
+    vcf_v[voice] = CAL_VCF_OPEN;
+    vca_v[voice] = CAL_VCA_OPEN;
+  }
 
-  uint16_t vca_v[4] = { 4095, 4095, 4095, 4095 };
-  if (voice < 4) vca_v[voice] = vca;
+  htim12->setCaptureCompare(1, vcf_v[0], TICK_COMPARE_FORMAT);
+  htim4->setCaptureCompare(3, vcf_v[1], TICK_COMPARE_FORMAT);
+  htim15->setCaptureCompare(2, vcf_v[2], TICK_COMPARE_FORMAT);
+  htim5->setCaptureCompare(3, vcf_v[3], TICK_COMPARE_FORMAT);
+
   htim2->setCaptureCompare(3, vca_v[0], TICK_COMPARE_FORMAT);
   htim13->setCaptureCompare(1, vca_v[1], TICK_COMPARE_FORMAT);
   htim1->setCaptureCompare(4, vca_v[2], TICK_COMPARE_FORMAT);
@@ -179,44 +191,52 @@ inline void update_CV_outs() {
 }
 
 void update_CV_outs_manual_calibration() {
-  static constexpr uint16_t CAL_VCA_COMPARE = 150;
-  static constexpr uint16_t CAL_SQR_ON = 50;
-  static constexpr uint16_t CAL_SQR_MUTED = 4095;
+  // One level per oscillator, carrying all of its waves: opening it for the
+  // oscillator under trim also lets its pulse through (see waveSelector.h).
+  static constexpr uint16_t CAL_OSC_ON = 50;
+  static constexpr uint16_t CAL_OSC_MUTED = 4095;
+  // The oscillator levels are inverted (lin_to_log_128[] — 4095 is silent), the
+  // sub CV is direct (SubLevelVal * 32), so its mute is the other end of the
+  // scale: at CAL_OSC_MUTED mcpUpdate() had every voice's sub DAC wide open.
+  static constexpr uint16_t CAL_SUB_MUTED = 0;
 
-  uint8_t osc = (uint8_t)manualCalibrationStage / 2;
-  uint8_t voice = (uint8_t)manualCalibrationStage / 4;
+  uint8_t osc = cal_stage_to_osc_n((uint8_t)manualCalibrationStage, NUM_OSCILLATORS);
+  if (osc >= NUM_OSCILLATORS) osc = NUM_OSCILLATORS - 1;
+  uint8_t voice = osc / 2;
   if (voice > 3) voice = 3;
+  const uint8_t stage = (uint8_t)manualCalibrationStage;
+  const bool oscA = ((osc % 2) == 0);
+  const bool tri = cal_stage_is_tri_n(stage, NUM_OSCILLATORS);
+  const bool square = cal_stage_is_square_n(stage, NUM_OSCILLATORS);
 
   for (int i = 0; i < 4; i++) {
-    waveSelectorMux.writePin(sawPins[i], 1);
-    waveSelectorMux.writePin(saw2Pins[i], 1);
-    waveSelectorMux.writePin(triPins[i], 1);
-    waveSelectorMux.writePin(sinePins[i], 1);
+    waveSelectorMux.writePin(osc1SawPins[i], 1);
+    waveSelectorMux.writePin(osc2SawPins[i], 1);
+    waveSelectorMux.writePin(osc1TriPins[i], 1);
+    waveSelectorMux.writePin(osc2PulsePins[i], 1);
   }
 
-  if (((uint8_t)manualCalibrationStage % 2) == 0) {
-    if ((osc % 2) == 0) {
-      OSC1Level = CAL_SQR_ON;
-      OSC2Level = CAL_SQR_MUTED;
-      waveSelectorMux.writePin(sawPins[voice], 0);
-    } else {
-      OSC1Level = CAL_SQR_MUTED;
-      OSC2Level = CAL_SQR_ON;
-      waveSelectorMux.writePin(saw2Pins[voice], 0);
+  // A needs OSC1Level on every substage; B needs OSC2Level. Pulse has no
+  // switch — it mutes when DCO PW is 0 (saw/tri), not via this DAC.
+  if (oscA) {
+    OSC1Level = CAL_OSC_ON;
+    OSC2Level = CAL_OSC_MUTED;
+    if (tri) {
+      waveSelectorMux.writePin(osc1TriPins[voice], 0);
+    } else if (!square) {
+      waveSelectorMux.writePin(osc1SawPins[voice], 0);
     }
   } else {
-    if ((osc % 2) == 0) {
-      OSC1Level = CAL_SQR_ON;
-      OSC2Level = CAL_SQR_MUTED;
-      waveSelectorMux.writePin(triPins[voice], 0);
+    OSC1Level = CAL_OSC_MUTED;
+    OSC2Level = CAL_OSC_ON;
+    if (square) {
+      waveSelectorMux.writePin(osc2PulsePins[voice], 0);
     } else {
-      OSC1Level = CAL_SQR_MUTED;
-      OSC2Level = CAL_SQR_ON;
-      waveSelectorMux.writePin(sinePins[voice], 0);
+      waveSelectorMux.writePin(osc2SawPins[voice], 0);
     }
   }
-  SubLevel = CAL_SQR_MUTED;
+  SubLevel = CAL_SUB_MUTED;
   waveSelectorMux.update();
   mcpUpdate();
-  write_cv_pwm_manual_calibration(voice, CAL_VCA_COMPARE);
+  write_cv_pwm_manual_calibration(voice);
 }

@@ -21,7 +21,7 @@ flowchart LR
   Params --> Matrix["mod_matrix"]
   Matrix --> CV
   CV --> Timers["Timer PWM\nVCF / VCA / RESO"]
-  Params --> MCP["mcpUpdate\nSQR / Sub DACs"]
+  Params --> MCP["mcpUpdate\nOsc / Sub level DACs"]
   Params --> Wave["update_waveSelector"]
   LFO --> M["sendSerial 'm' @ 1 ms"]
   ADSR --> M
@@ -114,7 +114,7 @@ DCO-owned ParamIds forward immediately via slim `'p'`. Gap 154 / cal 155 from DC
 When `manualCalibrationFlag` is set:
 
 - `loop` calls `update_CV_outs_manual_calibration()` instead of `update_CV_outs()`.
-- Mutes mux / parks VCA / forces SQR levels for `manualCalibrationStage`.
+- Mutes mux / parks VCA / forces the oscillator levels for `manualCalibrationStage`: the calibrated oscillator's level stays open (it carries all of that oscillator's waves), the other one of the pair and the subs are muted.
 - Related ParamIds forward stage/offset/store to DCO.
 
 ---

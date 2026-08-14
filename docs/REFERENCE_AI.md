@@ -18,7 +18,7 @@ Deep semantic map of the STM32 mainboard firmware. Prefer this for “how does X
 | EnvVCA / EnvVCF / EnvDCO ×4 (Q15) | Voice allocation / PIO DCO pitch (DCO board) |
 | LFO1/2 + VCF drift + mod matrix | Front-panel scanning (Input); preset store (DCO LittleFS) |
 | Filter/VCA/resonance PWM CVs | TFT UI (Screen) |
-| SQR/Sub DAC levels, wave mux enables | Amp/PW calibration measurement (DCO) |
+| Oscillator/sub DAC levels, wave mux enables | Amp/PW calibration measurement (DCO) |
 | Param routing hub (forwards DCO-owned IDs) | Preset records / slot names (DCO / Input cache) |
 | Preset relay Input ↔ DCO (`'q'`/`'N'`/`'O'`/`'L'`, blocks, ids 170–173) | |
 
@@ -78,7 +78,7 @@ Do **not** restore BE `'p'` or Input `'e'`/`'f'`/`'s'` streams.
 1. **Note → VCA/VCF CV:** DCO `'n'`/`'o'` → EnvVCA/VCF Q15 → `update_CV_outs` → timers.
 2. **Panel filter block → cutoff:** Input `'d'` (Serial8) or DCO USB/MIDI `'d'` (Serial2) → CUTOFF/RESONANCE/depths → scale bake → next CV tick.
 3. **EnvDCO / LFO → DCO pitch:** local clocks → `'m'` → DCO depth bakes + Character + pitch drift.
-4. **Wave / SQR enable:** Param apply → `update_waveSelector` / MCP; digital square enables also forward to DCO.
+4. **Wave enable / levels:** Param apply → `update_waveSelector` / MCP; digital pulse enables also forward to DCO. A DAC level is one oscillator, all of its waves at once; the A pulse has no switch, so only the DCO's PW CV can silence it.
 5. **Manual cal:** Param flags → `update_CV_outs_manual_calibration` + DCO forwards; gap 154 DCO→MB→Input→Screen.
 6. **Preset save:** Input `'q'` (stored + relayed) → Input `'p'` 170 → `apply_param_preset_save` → `forward_dco` → DCO writes the record from its own shadow, which the relayed `'a'`–`'d'` blocks keep current.
 7. **Preset load / browse:** Input `'p'` 171 or `'N'` relayed to the DCO; the DCO answers with `'p'`/`'a'`–`'d'` (applied here, mirrored on) plus `'O'`/`'L'` (relayed straight to Input).

@@ -2,15 +2,38 @@ static void forward_dco(uint8_t id, int16_t v) {
   serialSendParamToDCO(id, v);
 }
 
-static void apply_param_osc1_saw_enable(int16_t v) { osc1SawEnable = (v != 0); update_waveSelector(0); }
-static void apply_param_osc1_pulse_enable(int16_t v) { osc1PulseEnable = (v != 0); }
-static void apply_param_osc1_tri_enable(int16_t v) { osc1TriEnable = (v != 0); update_waveSelector(2); }
-static void apply_param_osc2_saw_enable(int16_t v) { osc2SawEnable = (v != 0); update_waveSelector(0); }
-static void apply_param_osc2_pulse_enable(int16_t v) { osc2PulseEnable = (v != 0); update_waveSelector(3); }
-static void apply_param_osc2_tri_enable(int16_t v) { osc2TriEnable = (v != 0); update_waveSelector(3); }
-static void apply_param_osc3_saw_enable(int16_t v) { (void)v; }
-static void apply_param_osc3_pulse_enable(int16_t v) { (void)v; }
-static void apply_param_osc3_tri_enable(int16_t v) { (void)v; }
+static void apply_param_osc1_saw_enable(int16_t v) {
+  osc1SawEnable = (v != 0);
+  update_waveSelector(0);
+  forward_dco(PARAM_OSC1_SAW_ENABLE, v);
+}
+static void apply_param_osc1_pulse_enable(int16_t v) {
+  osc1PulseEnable = (v != 0);
+  forward_dco(PARAM_OSC1_PULSE_ENABLE, v);
+}
+static void apply_param_osc1_tri_enable(int16_t v) {
+  osc1TriEnable = (v != 0);
+  update_waveSelector(2);
+  forward_dco(PARAM_OSC1_TRI_ENABLE, v);
+}
+static void apply_param_osc2_saw_enable(int16_t v) {
+  osc2SawEnable = (v != 0);
+  update_waveSelector(1);
+  forward_dco(PARAM_OSC2_SAW_ENABLE, v);
+}
+static void apply_param_osc2_pulse_enable(int16_t v) {
+  osc2PulseEnable = (v != 0);
+  update_waveSelector(3);
+  forward_dco(PARAM_OSC2_PULSE_ENABLE, v);
+}
+static void apply_param_osc2_tri_enable(int16_t v) {
+  osc2TriEnable = (v != 0);
+  // No 595 bit: osc2PulsePins is OSC2 pulse, osc1TriPins is OSC1 triangle.
+  forward_dco(PARAM_OSC2_TRI_ENABLE, v);
+}
+static void apply_param_osc3_saw_enable(int16_t v) { forward_dco(PARAM_OSC3_SAW_ENABLE, v); }
+static void apply_param_osc3_pulse_enable(int16_t v) { forward_dco(PARAM_OSC3_PULSE_ENABLE, v); }
+static void apply_param_osc3_tri_enable(int16_t v) { forward_dco(PARAM_OSC3_TRI_ENABLE, v); }
 static void apply_param_sine_status(int16_t v) { sineStatus = (v != 0); }
 
 static void apply_param_resonance_comp(int16_t v) { RESONANCEAmpCompensation = (v != 0); }
@@ -48,33 +71,42 @@ static void apply_param_portamento_mode(int16_t v) { portamentoMode = (uint8_t)v
 static void apply_param_vcf_keytrack(int16_t v) {
   VCFKeytrack = v;
   VCFKeytrackModifier_q15 = (VCFKeytrack != 0) ? (((int32_t)VCFKeytrack * 32768) / 8000) : 32768;
+  forward_dco(PARAM_VCF_KEYTRACK, v);
 }
 
 static void apply_param_velocity_to_vcf(int16_t v) {
   velocityToVCFVal = (int8_t)v;
   velocityToVCF_q15 = ((int32_t)velocityToVCFVal * 825) >> 6;
+  forward_dco(PARAM_VELOCITY_TO_VCF, v);
 }
 
 static void apply_param_velocity_to_vca(int16_t v) {
   velocityToVCAVal = (int8_t)v;
   velocityToVCA_q15 = ((int32_t)velocityToVCAVal * 825) >> 6;
+  forward_dco(PARAM_VELOCITY_TO_VCA, v);
 }
 
 static void apply_param_osc1_level(int16_t v) {
   OSC1LevelVal = constrain(v, 0, 128);
   OSC1Level = lin_to_log_128[OSC1LevelVal];
   mcpUpdate();
+  forward_dco(PARAM_OSC1_LEVEL, v);
 }
 static void apply_param_osc2_level(int16_t v) {
   OSC2LevelVal = constrain(v, 0, 128);
   OSC2Level = lin_to_log_128[OSC2LevelVal];
   mcpUpdate();
+  forward_dco(PARAM_OSC2_LEVEL, v);
 }
-static void apply_param_osc3_level(int16_t v) { OSC3LevelVal = constrain(v, 0, 128); }
+static void apply_param_osc3_level(int16_t v) {
+  OSC3LevelVal = constrain(v, 0, 128);
+  forward_dco(PARAM_OSC3_LEVEL, v);
+}
 static void apply_param_sub_level(int16_t v) {
   SubLevelVal = v;
   SubLevel = (uint16_t)constrain((int)SubLevelVal * 32, 0, 4095);
   mcpUpdate();
+  forward_dco(PARAM_SUB_LEVEL, v);
 }
 
 static void apply_param_calibration_value(int16_t /*v*/) {}
@@ -128,6 +160,7 @@ static void apply_param_lfo2_speed(int16_t v) {
 
 static void apply_param_vca_level(int16_t v) {
   VCALevel = (uint16_t)constrain((int)v * 32, 0, 4095);
+  forward_dco(PARAM_VCA_LEVEL, v);
 }
 static void apply_param_dist_drive(int16_t v) { DIST_DRIVE = (uint16_t)constrain((int)v, 0, 4095); }
 static void apply_param_dist_mix(int16_t v) { DIST_MIX = (uint16_t)constrain((int)v, 0, 4095); }
@@ -136,6 +169,7 @@ static void apply_param_filter_mode(int16_t v) { FILTER_MODE = (uint8_t)constrai
 static void apply_param_lfo1_to_vca(int16_t v) {
   LFO1toVCA = (uint16_t)constrain((int)v, 0, 4095);
   cv_bake_lfo1_to_vca_scale();
+  forward_dco(PARAM_LFO1_TO_VCA, v);
 }
 static void apply_param_lfo2_to_pw(int16_t v) { LFO2toPW = (uint16_t)v; forward_dco(PARAM_LFO2_TO_PW, v); }
 static void apply_param_adsr3_to_pwm(int16_t v) { ADSR1toPWM = (int16_t)v - 512; forward_dco(PARAM_ADSR3_TO_PWM, v); }
@@ -195,16 +229,42 @@ static void apply_param_calibration_flag(int16_t v) {
   forward_dco(PARAM_CALIBRATION_FLAG, v);
 }
 static void apply_param_manual_calibration_flag(int16_t v) {
+  const bool wasOn = manualCalibrationFlag;
   manualCalibrationFlag = (v != 0);
   calibrationFlag = (v != 0);
+  // The cal walk clobbers the OSC/Sub level globals and the 595 wave switches
+  // to solo one oscillator; put the panel's real mixer state back on exit.
+  if (wasOn && v == 0) {
+    OSC1Level = lin_to_log_128[OSC1LevelVal];
+    OSC2Level = lin_to_log_128[OSC2LevelVal];
+    SubLevel = (uint16_t)constrain((int)SubLevelVal * 32, 0, 4095);
+    mcpUpdate();
+    update_waveSelector(4);
+  }
   forward_dco(PARAM_MANUAL_CALIBRATION_FLAG, v);
 }
 static void apply_param_manual_calibration_stage(int16_t v) {
-  manualCalibrationStage = (int8_t)v;
-  forward_dco(PARAM_MANUAL_CALIBRATION_STAGE, v);
+  int16_t stage = v;
+  if (stage < 0) stage = 0;
+  const int16_t maxStage = (int16_t)cal_stage_max_n(NUM_OSCILLATORS);
+  if (stage > maxStage) stage = maxStage;
+  manualCalibrationStage = (uint8_t)stage;
+  forward_dco(PARAM_MANUAL_CALIBRATION_STAGE, stage);
 }
 static void apply_param_manual_calibration_offset(int16_t v) {
   forward_dco(PARAM_MANUAL_CALIBRATION_OFFSET, v);
+}
+static void apply_param_manual_calibration_step(int16_t v) {
+  forward_dco(PARAM_MANUAL_CALIBRATION_STEP, v);
+}
+static void apply_param_amp_comp_440(int16_t v) {
+  forward_dco(PARAM_AMP_COMP_440, v);
+}
+static void apply_param_amp_comp_duty_offset(int16_t v) {
+  forward_dco(PARAM_AMP_COMP_DUTY_OFFSET, v);
+}
+static void apply_param_cal_pw_center(int16_t v) {
+  forward_dco(PARAM_CAL_PW_CENTER, v);
 }
 static void apply_param_gap_from_dco(int16_t /*v*/) {}
 static void apply_param_manual_calibration_offset_from_dco(int16_t /*v*/) {}
@@ -230,6 +290,15 @@ static void apply_param_debug_command(int16_t v) {
       return;
     case 42:
       bench_toggle_periodic();
+      return;
+    case 43:
+      mcp_dac_probe();
+      return;
+    case 44:
+      mcp_dac_reattach();
+      return;
+    case 45:
+      bench_request_dump();
       return;
     default:
       forward_dco(PARAM_DEBUG_COMMAND, v);
@@ -336,6 +405,10 @@ static const ParamDescriptorT<int16_t> paramTable[] = {
   { PARAM_MANUAL_CALIBRATION_FLAG, apply_param_manual_calibration_flag },
   { PARAM_MANUAL_CALIBRATION_STAGE, apply_param_manual_calibration_stage },
   { PARAM_MANUAL_CALIBRATION_OFFSET, apply_param_manual_calibration_offset },
+  { PARAM_MANUAL_CALIBRATION_STEP, apply_param_manual_calibration_step },
+  { PARAM_AMP_COMP_440, apply_param_amp_comp_440 },
+  { PARAM_CAL_PW_CENTER, apply_param_cal_pw_center },
+  { PARAM_AMP_COMP_DUTY_OFFSET, apply_param_amp_comp_duty_offset },
   { PARAM_GAP_FROM_DCO, apply_param_gap_from_dco },
   { PARAM_MANUAL_CALIBRATION_OFFSET_FROM_DCO, apply_param_manual_calibration_offset_from_dco },
   { PARAM_MANUAL_CALIBRATION_STORE, apply_param_manual_calibration_store },

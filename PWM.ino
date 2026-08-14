@@ -1,12 +1,14 @@
 static constexpr uint32_t MCP_RING_US = 120;
-static constexpr uint8_t MCP_ADDR7[3] = { 0x63, 0x64, 0x65 };
 
 inline void mcpUpdate(uint16_t l1, uint16_t l2, uint16_t ls, bool stagger) {
   if (!stagger) {
     mcp_i2c_wait_idle();
-    if (mcp_present[0]) mcp.analogWrite(l1, l2, l1, l2);
-    if (mcp_present[1]) mcp2.analogWrite(l1, l2, l1, ls);
-    if (mcp_present[2]) mcp3.analogWrite(ls, ls, ls, l2);
+    // if (mcp_present[0]) mcp.analogWrite(l1, l2, l1, l2);
+    // if (mcp_present[1]) mcp2.analogWrite(l1, l2, l1, ls);
+    // if (mcp_present[2]) mcp3.analogWrite(ls, ls, ls, l2);
+    mcp.analogWrite(l1, l2, l1, l2);
+    mcp2.analogWrite(l1, l2, l1, ls);
+    mcp3.analogWrite(ls, ls, ls, l2);
     return;
   }
 
@@ -20,10 +22,10 @@ inline void mcpUpdate(uint16_t l1, uint16_t l2, uint16_t ls, bool stagger) {
 
   for (uint8_t tries = 0; tries < 3; tries++) {
     const uint8_t i = ring;
-    if (!mcp_present[i]) {
-      ring = (uint8_t)((ring + 1u) % 3u);
-      continue;
-    }
+    // if (!mcp_present[i]) {
+    //   ring = (uint8_t)((ring + 1u) % 3u);
+    //   continue;
+    // }
 
     uint16_t a, b, c, d;
     if (i == 0) {

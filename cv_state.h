@@ -69,9 +69,9 @@ uint16_t OSC2Level = 0;
 uint16_t OSC3Level = 0;
 uint16_t SubLevel = 0;
 
-// MCP aliases (same analog levels as OSC1/OSC2/Sub)
-#define SQR1Level OSC1Level
-#define SQR2Level OSC2Level
+// A level is the whole oscillator, every wave of it at once; the old SQR1Level /
+// SQR2Level names for these MCP4728 channels described a square-only level that
+// the wiring never had, so they are gone.
 
 bool ADSR3Enabled = false;
 

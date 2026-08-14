@@ -14,36 +14,12 @@ Rox74HC595<2> waveSelectorMux;
 #define PIN_CLK PE3    // pin 11 on 74HC595 (CLK)   / SH
 #define PIN_PWM -1
 
-uint8_t saw1Pin = 0;
-uint8_t saw1_2Pin = 5;
-uint8_t tri1Pin = 0;
-uint8_t sine1Pin = 0;
-
-uint8_t saw2Pin = 0;
-uint8_t saw2_2Pin = 0;
-uint8_t tri2Pin = 0;
-uint8_t sine2Pin = 0;
-
-uint8_t saw3Pin = 0;
-uint8_t saw3_2Pin = 0;
-uint8_t tri3Pin = 0;
-uint8_t sine3Pin = 0;
-
-uint8_t saw4Pin = 0;
-uint8_t saw4_2Pin = 0;
-uint8_t tri4Pin = 0;
-uint8_t sine4Pin = 0;
-
-// ??
-// uint8_t triPins[4] = { 2, 6, 10, 14 };
-// uint8_t sinePins[4] = { 1, 5, 9, 13 };
-// uint8_t saw2Pins[4] = { 0, 4, 8, 12 };
-// uint8_t sawPins[4] = { 3, 7, 11, 15 };
-
-// crossed cables
-uint8_t triPins[4] = { 14, 10, 6, 2 };
-uint8_t sinePins[4] = { 13, 9, 5, 1 };
-uint8_t saw2Pins[4] = { 12, 8, 4, 0 };
-uint8_t sawPins[4] = { 15, 11, 7, 3 };
+// Crossed cables. Active-low (write 0 = switch closed). Voices 0..3.
+// There is no OSC2 triangle bit; OSC1 pulse has no switch either — it rides its
+// oscillator's level channel, so only the DCO's PW CV for that voice can silence it.
+uint8_t osc1TriPins[4] = { 14, 10, 6, 2 };
+uint8_t osc2PulsePins[4] = { 13, 9, 5, 1 };
+uint8_t osc2SawPins[4] = { 12, 8, 4, 0 };
+uint8_t osc1SawPins[4] = { 15, 11, 7, 3 };
 
 #endif

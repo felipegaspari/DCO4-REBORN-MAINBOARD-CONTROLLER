@@ -434,7 +434,7 @@ inline void bench_out_drain_t_chunk() {
   static constexpr int kTFrameBytes = 17;  // RAW 't': cmd + 16 payload
   uint8_t bursts = 0;
   while (bench_out_active && bursts < 24) {
-    if (Serial2.availableForWrite() < kTFrameBytes) break;
+    if (DcoDma.availableForWrite() < kTFrameBytes) break;
     const uint16_t remain = (uint16_t)(bench_out_len - bench_out_pos);
     if (remain == 0u) {
       bench_out_active = false;

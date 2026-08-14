@@ -11,31 +11,30 @@ void update_waveSelector(byte wave) {
   switch (wave) {
     case 0:
       for (int i = 0; i < 4; i++) {
-        waveSelectorMux.writePin(sawPins[i], !osc1SawEnable);
-        waveSelectorMux.writePin(saw2Pins[i], !osc2SawEnable);
+        waveSelectorMux.writePin(osc1SawPins[i], !osc1SawEnable);
       }
       break;
     case 1:
       for (int i = 0; i < 4; i++) {
-        waveSelectorMux.writePin(saw2Pins[i], !osc2SawEnable);
+        waveSelectorMux.writePin(osc2SawPins[i], !osc2SawEnable);
       }
       break;
     case 2:
       for (int i = 0; i < 4; i++) {
-        waveSelectorMux.writePin(triPins[i], !osc1TriEnable);
+        waveSelectorMux.writePin(osc1TriPins[i], !osc1TriEnable);
       }
       break;
     case 3:
       for (int i = 0; i < 4; i++) {
-        waveSelectorMux.writePin(sinePins[i], !osc2PulseEnable);
+        waveSelectorMux.writePin(osc2PulsePins[i], !osc2PulseEnable);
       }
       break;
     case 4:
       for (int i = 0; i < 4; i++) {
-        waveSelectorMux.writePin(sawPins[i], !osc1SawEnable);
-        waveSelectorMux.writePin(saw2Pins[i], !osc2SawEnable);
-        waveSelectorMux.writePin(triPins[i], !osc1TriEnable);
-        waveSelectorMux.writePin(sinePins[i], !osc2PulseEnable);
+        waveSelectorMux.writePin(osc1SawPins[i], !osc1SawEnable);
+        waveSelectorMux.writePin(osc2SawPins[i], !osc2SawEnable);
+        waveSelectorMux.writePin(osc1TriPins[i], !osc1TriEnable);
+        waveSelectorMux.writePin(osc2PulsePins[i], !osc2PulseEnable);
       }
       break;
     default:

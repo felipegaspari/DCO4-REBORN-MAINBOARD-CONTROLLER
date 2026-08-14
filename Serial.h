@@ -18,6 +18,7 @@
 #include "_build_libs/DCO-PROTOCOL/serial_input_protocol.h"
 #include "_build_libs/DCO-PROTOCOL/serial_frame.h"
 #include "_build_libs/DCO-PROTOCOL/serial_parser.h"
+#include "serial_dma.h"
 
 // STM32 core 3.x declares `extern Uart SerialN` but only *defines* them if
 // ENABLE_HWSERIALn reaches core Serial.cpp (often cached, so build_opt.h is
@@ -52,11 +53,11 @@ void read_serial_2();
 void read_serial_8();
 void sendSerial();
 
-// The core's Uart::write() spins with no timeout once its TX ring is full
-// (Serial.cpp: `while (!availableForWrite()) {}`), so a peer that never drains
-// takes the audio loop down with it. Every Mainboard send goes through this
-// instead: room for the whole frame or nothing at all. Returns false if dropped.
-bool mb_write_frame(Uart& port, uint8_t cmd, const uint8_t* payload, uint8_t len);
+// DMA TX drop-if-full: room for the whole stuffed frame or nothing. A peer that
+// never drains must not spin the audio loop (the core's Uart::write() would).
+bool mb_write_frame(UartDmaTx& port, uint8_t cmd, const uint8_t* payload, uint8_t len);
+// Preset / screen-signal path: wait until the DMA ping-pong accepts the frame.
+void mb_write_frame_blocking(UartDmaTx& port, uint8_t cmd, const uint8_t* payload, uint8_t len);
 
 void serialSendParamToDCO(uint8_t id, int16_t value);
 void serialSendParam32ToDCO(uint8_t id, uint32_t value);
@@ -64,7 +65,7 @@ void serialSendParam32ToInput(uint8_t id, uint32_t value);
 void serialSendParam16ToInput(uint8_t id, int16_t value);
 void serialSendParam16ToScreen(uint8_t id, int16_t value);
 void serialSendParam32ToScreen(uint8_t id, uint32_t value);
-void serial_send_bench_text_on(Stream& port, const uint8_t* data, uint8_t n);
+void serial_send_bench_text_on(UartDmaTx& port, const uint8_t* data, uint8_t n);
 void serial_send_bench_text_chunk(const uint8_t* data, uint8_t n);
 #ifdef MB_UART_PROBE
 void mb_uart_probe_poll();

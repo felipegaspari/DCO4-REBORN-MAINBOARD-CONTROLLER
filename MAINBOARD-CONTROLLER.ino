@@ -6,10 +6,12 @@
 
 #define ENABLE_SD             // SDMMC pin reservation; preset store still commented
 
-#define RUNNING_AVERAGE       // slim bench.h profiler; dco_control opcodes 40/41/42
+#define RUNNING_AVERAGE       // slim bench.h profiler; dco_control 40/41/42 + dump 45 + MCP 43/44
 // #define MB_UART_PROBE      // 1 Hz 't' labels on Serial/1/2/8; Board shows mb s2 if DCO is on USART2 PD5; desyncs Input/Screen if plugged in
 // #define MB_UART_RX_LOG        // USB CDC one line per UART cmd byte (s2/s8); s1 logs byte count (no parser)
 // #define ENABLE_MB_MOD_STREAM  // MB→DCO 'm' @ 1 kHz; also define on DCO to consume it
+#define ENABLE_MCP4728        // three I2C DACs on this board; dco_control opcodes 43/44
+#define MCP_I2C_DMA 0  // 0 = I2C IT (pre-DMA), 1 = I2C TX DMA
 #ifndef BENCH_STAGE_STRIDE
 #define BENCH_STAGE_STRIDE 1  // profiler: sample every N loops
 #endif
@@ -56,6 +58,7 @@ void setup() {
   Serial8.setTx(MB_SERIAL8_TX);
   Serial8.begin(2500000);
 #endif
+  serial_dma_init();
 
   noteStart[0] = 0;
   noteEnd[0] = 1;
@@ -125,4 +128,5 @@ void loop() {
   }
 
   bench_poll();
+  serial_dma_poll();
 }

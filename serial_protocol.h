@@ -41,6 +41,9 @@ static constexpr uint8_t SERIAL_BENCH_TEXT_DATA_MAX    = 15;
 // 's': [ScreenMode] — the raw byte the Screen puts in serialSignal.
 static constexpr uint8_t SERIAL_PAYLOAD_LEN_SCREEN_SIGNAL = 1;
 
+// DCO → MB → Screen 'q': [slot:u8][name:16]. Not Input's 16-byte save-name 'q'.
+static constexpr uint8_t SERIAL_PAYLOAD_LEN_SCREEN_PRESET_SCROLL = 17;
+
 static inline uint8_t serial_protocol_payload_len(uint8_t cmd) {
   switch (cmd) {
     case SERIAL_CMD_NOTE_ON:     return SERIAL_PAYLOAD_LEN_NOTE_ON;
@@ -51,6 +54,7 @@ static inline uint8_t serial_protocol_payload_len(uint8_t cmd) {
     case SERIAL_CMD_PARAM_16:    return INPUT_SERIAL_LEN_PARAM_16;
     case SERIAL_CMD_PARAM_32:    return INPUT_SERIAL_LEN_PARAM_32;
     case SERIAL_CMD_SCREEN_SIGNAL: return SERIAL_PAYLOAD_LEN_SCREEN_SIGNAL;
+    case (uint8_t)'q':             return SERIAL_PAYLOAD_LEN_SCREEN_PRESET_SCROLL;
     // USB/MIDI/preset mirror (Input cmds on DCO→MB Serial2). The EnvDCO engine
     // is DCO-local, but 'c' still crosses so it can be relayed to the panel.
     case INPUT_CMD_ADSR1_BLOCK:

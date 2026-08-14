@@ -4,6 +4,9 @@
 #ifndef NUM_VOICES
 #define NUM_VOICES 4
 #endif
+#ifndef NUM_OSCILLATORS
+#define NUM_OSCILLATORS (NUM_VOICES * 2)
+#endif
 #ifndef NUM_VOICES_TOTAL
 #define NUM_VOICES_TOTAL NUM_VOICES
 #endif
@@ -38,7 +41,7 @@ int8_t analogDriftSpread;
 
 bool calibrationFlag = false;
 bool manualCalibrationFlag = false;
-int8_t manualCalibrationStage = 0;
+uint8_t manualCalibrationStage = 0;
 
 uint16_t aftertouch = 0;
 uint8_t mod_wheel_in = 0;

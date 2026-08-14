@@ -152,7 +152,7 @@ RP2350 supports the same GPIO/PWM structure as RP2040, so this is a direct logic
 
 ---
 
-## I2C MCP4728 (square / sub levels)
+## I2C MCP4728 (oscillator / sub levels)
 
 | Item | Value |
 |------|--------|
@@ -165,11 +165,13 @@ RP2350 supports the same GPIO/PWM structure as RP2040, so this is a direct logic
 
 | Chip | A | B | C | D |
 |------|---|---|---|---|
-| `mcp` | V1 OSC1 SQR | V2 OSC2 SQR | V2 OSC1 SQR | V3 OSC2 SQR |
-| `mcp2` | V3 OSC1 SQR | V4 OSC2 SQR | V4 OSC1 SQR | SUB3 |
-| `mcp3` | SUB4 | SUB1 | SUB2 | V1 OSC2 SQR |
+| `mcp` | V1 OSC1 | V2 OSC2 | V2 OSC1 | V3 OSC2 |
+| `mcp2` | V3 OSC1 | V4 OSC2 | V4 OSC1 | SUB3 |
+| `mcp3` | SUB4 | SUB1 | SUB2 | V1 OSC2 |
 
-Levels: globals `SQR1Level`, `SQR2Level`, `SubLevel` (updated from params).
+Twelve channels: one per voice per oscillator, plus one per sub. A channel is **that oscillator's level**, not one waveform's — the saw, the triangle and the pulse of that oscillator all pass through it, so it cannot be used to hide one of them. Oscillator levels are inverted (`lin_to_log_128[]`, 4095 = silent); sub levels are direct (`SubLevelVal * 32`, 0 = silent).
+
+Levels: globals `OSC1Level`, `OSC2Level`, `SubLevel` (updated from params). The per-voice channels exist in hardware but the firmware does not drive them independently: `mcpUpdate()` writes the same `OSC1Level` to every voice's OSC1 channel, and likewise for OSC2 and the subs. Anything that needs one voice on its own (manual calibration) uses that voice's VCA and filter instead.
 
 ---
 
@@ -183,14 +185,14 @@ Levels: globals `SQR1Level`, `SQR2Level`, `SubLevel` (updated from params).
 
 Mux bit arrays (crossed cabling — active values in `waveSelector.h`):
 
-| Wave | Bits per voice 0..3 |
-|------|---------------------|
-| TRI | 14, 10, 6, 2 |
-| SINE | 13, 9, 5, 1 |
-| SAW2 | 12, 8, 4, 0 |
-| SAW | 15, 11, 7, 3 |
+| Wave | Array | Bits per voice 0..3 |
+|------|-------|---------------------|
+| OSC1 triangle | `osc1TriPins` | 14, 10, 6, 2 |
+| OSC2 pulse | `osc2PulsePins` | 13, 9, 5, 1 |
+| OSC2 saw | `osc2SawPins` | 12, 8, 4, 0 |
+| OSC1 saw | `osc1SawPins` | 15, 11, 7, 3 |
 
-`update_waveSelector(wave)` writes pins from `sawStatus` / `saw2Status` / `triStatus` / `sqr2Status` (inverted).
+`update_waveSelector(wave)` writes those arrays from `osc1SawEnable` / `osc2SawEnable` / `osc1TriEnable` / `osc2PulseEnable` (inverted). There is no OSC2 triangle bit.
 
 ---
 
