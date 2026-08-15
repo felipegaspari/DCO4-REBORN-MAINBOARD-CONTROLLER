@@ -61,7 +61,7 @@ uint16_t PW = 0;
 byte presetName[16] = { 32, 32, 32, 32, 32, 32, 32, 32,
                         32, 32, 32, 32, 32, 32, 32, 32 };
 
-void update_parameters(uint16_t paramNumber, int16_t paramValue);
+void update_parameters(uint8_t paramNumber, int16_t paramValue);
 void init_param_router();
 
 #endif

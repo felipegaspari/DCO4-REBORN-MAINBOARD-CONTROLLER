@@ -1,121 +1,37 @@
-bool mb_write_frame(UartDmaTx& port, uint8_t cmd, const uint8_t* payload, uint8_t len) {
-  uint8_t buf[SERIAL_STUFFED_MAX];
-  const int n = serial_frame_stuff(cmd, payload, len, buf, sizeof(buf));
-  if (n <= 0) return false;
-  return port.write(buf, (size_t)n) == (size_t)n;
-}
-
-void mb_write_frame_blocking(UartDmaTx& port, uint8_t cmd, const uint8_t* payload, uint8_t len) {
-  uint8_t buf[SERIAL_STUFFED_MAX];
-  const int n = serial_frame_stuff(cmd, payload, len, buf, sizeof(buf));
-  if (n <= 0) return;
-  (void)port.write_blocking(buf, (size_t)n);
-}
-
-static void serial_send_mod_stream() {
-#if defined(ENABLE_SERIAL2) && defined(ENABLE_MB_MOD_STREAM)
-  uint8_t payload[SERIAL_PAYLOAD_LEN_MOD_STREAM];
-  encode_u16_le(payload + 0, (uint16_t)LFO1Level);
-  encode_u16_le(payload + 2, (uint16_t)LFO2Level);
-  for (uint8_t i = 0; i < 4; i++) {
-    encode_u16_le(payload + 4 + i * 2, (uint16_t)ADSR1Level_q15[i]);
-  }
-  encode_u32_le(payload + 12, (uint32_t)matrix_pitch_mod_q24);
-  serial_frame_write(DcoDma, SERIAL_CMD_MOD_STREAM, payload, SERIAL_PAYLOAD_LEN_MOD_STREAM);
-#endif
-}
-
-inline void sendSerial() {
-  serial_send_mod_stream();
-}
+#include "include_all.h"
 
 void serialSendParamToDCO(uint8_t id, int16_t value) {
-#ifdef ENABLE_SERIAL2
-  uint8_t payload[INPUT_SERIAL_LEN_PARAM_16];
+  uint8_t payload[SERIAL_LEN_PARAM_16];
   encode_param_p(payload, id, value);
-  mb_write_frame(DcoDma, SERIAL_CMD_PARAM_16, payload, INPUT_SERIAL_LEN_PARAM_16);
-#endif
+  serial_frame_write(DcoDma, CMD_PARAM_16, payload, SERIAL_LEN_PARAM_16);
 }
 
 void serialSendParam32ToDCO(uint8_t id, uint32_t value) {
-#ifdef ENABLE_SERIAL2
-  uint8_t payload[INPUT_SERIAL_LEN_PARAM_32];
+  uint8_t payload[SERIAL_LEN_PARAM_32];
   encode_param32(payload, id, value);
-  mb_write_frame(DcoDma, SERIAL_CMD_PARAM_32, payload, INPUT_SERIAL_LEN_PARAM_32);
-#endif
+  serial_frame_write(DcoDma, CMD_PARAM_32, payload, SERIAL_LEN_PARAM_32);
 }
 
 void serialSendParam32ToInput(uint8_t id, uint32_t value) {
-#ifdef ENABLE_SERIAL8
-  uint8_t payload[INPUT_SERIAL_LEN_PARAM_32];
+  uint8_t payload[SERIAL_LEN_PARAM_32];
   encode_param32(payload, id, value);
-  mb_write_frame(InputDma, INPUT_CMD_PARAM_32, payload, INPUT_SERIAL_LEN_PARAM_32);
-#endif
+  serial_frame_write(InputDma, CMD_PARAM_32, payload, SERIAL_LEN_PARAM_32);
 }
 
 void serialSendParam16ToInput(uint8_t id, int16_t value) {
-#ifdef ENABLE_SERIAL8
-  uint8_t payload[INPUT_SERIAL_LEN_PARAM_16];
+  uint8_t payload[SERIAL_LEN_PARAM_16];
   encode_param_p(payload, id, value);
-  mb_write_frame(InputDma, INPUT_CMD_PARAM_16, payload, INPUT_SERIAL_LEN_PARAM_16);
-#endif
+  serial_frame_write(InputDma, CMD_PARAM_16, payload, SERIAL_LEN_PARAM_16);
 }
 
 void serialSendParam16ToScreen(uint8_t id, int16_t value) {
-#ifdef ENABLE_SERIAL1
-  uint8_t payload[INPUT_SERIAL_LEN_PARAM_16];
+  uint8_t payload[SERIAL_LEN_PARAM_16];
   encode_param_p(payload, id, value);
-  mb_write_frame(ScreenDma, INPUT_CMD_PARAM_16, payload, INPUT_SERIAL_LEN_PARAM_16);
-#else
-  (void)id;
-  (void)value;
-#endif
+  serial_frame_write(ScreenDma, CMD_PARAM_16, payload, SERIAL_LEN_PARAM_16);
 }
 
 void serialSendParam32ToScreen(uint8_t id, uint32_t value) {
-#ifdef ENABLE_SERIAL1
-  uint8_t payload[INPUT_SERIAL_LEN_PARAM_32];
+  uint8_t payload[SERIAL_LEN_PARAM_32];
   encode_param32(payload, id, value);
-  // Live GAP (154) is the calibration UI; drop-if-full left the label stuck.
-  mb_write_frame_blocking(ScreenDma, INPUT_CMD_PARAM_32, payload, INPUT_SERIAL_LEN_PARAM_32);
-#endif
+  serial_frame_write(ScreenDma, CMD_PARAM_32, payload, SERIAL_LEN_PARAM_32);
 }
-
-void serial_send_bench_text_on(UartDmaTx& port, const uint8_t* data, uint8_t n) {
-  if (n > SERIAL_BENCH_TEXT_DATA_MAX) n = SERIAL_BENCH_TEXT_DATA_MAX;
-  uint8_t payload[SERIAL_PAYLOAD_LEN_BENCH_TEXT] = {};
-  payload[0] = n;
-  for (uint8_t i = 0; i < n; i++) {
-    payload[1 + i] = data[i];
-  }
-  serial_frame_write(port, SERIAL_CMD_BENCH_TEXT, payload, SERIAL_PAYLOAD_LEN_BENCH_TEXT);
-}
-
-void serial_send_bench_text_chunk(const uint8_t* data, uint8_t n) {
-#ifdef ENABLE_SERIAL2
-  serial_send_bench_text_on(DcoDma, data, n);
-#else
-  (void)data;
-  (void)n;
-#endif
-}
-
-#ifdef MB_UART_PROBE
-void mb_uart_probe_poll() {
-  static uint16_t ticks = 0;
-  if (++ticks < 1000u) return;
-  ticks = 0;
-#ifdef ENABLE_SERIAL
-  Serial.print("mb usb\n");
-#endif
-#ifdef ENABLE_SERIAL1
-  serial_send_bench_text_on(ScreenDma, reinterpret_cast<const uint8_t*>("mb s1\n"), 6);
-#endif
-#ifdef ENABLE_SERIAL2
-  serial_send_bench_text_on(DcoDma, reinterpret_cast<const uint8_t*>("mb s2\n"), 6);
-#endif
-#ifdef ENABLE_SERIAL8
-  serial_send_bench_text_on(InputDma, reinterpret_cast<const uint8_t*>("mb s8\n"), 6);
-#endif
-}
-#endif

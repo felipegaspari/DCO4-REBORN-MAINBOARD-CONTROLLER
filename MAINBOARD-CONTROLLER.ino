@@ -19,6 +19,10 @@
 #define BENCH_PERIOD_MAX_US 20000000  // 20 s; keep I2C/DAC stalls in loop period
 #endif
 
+// DMA implementation -- uncomment to enable
+#define DCO_PROTOCOL_IMPLEMENT_DMA
+////////////////////////////////////////////////
+
 #include "Arduino.h"
 #include "include_all.h"
 
@@ -100,7 +104,7 @@ void loop() {
     read_serial_2();
     BENCH_END(serial_2);
   }
-  
+
 
   {
     BENCH_BEGIN(lfos);

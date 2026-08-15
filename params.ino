@@ -426,6 +426,6 @@ void init_param_router() {
   param_router_build_jump(paramApplyJump, paramTable, paramTableSize);
 }
 
-inline void update_parameters(uint16_t paramNumber, int16_t paramValue) {
-  param_router_apply_jump(paramApplyJump, paramNumber, paramValue);
+void update_parameters(uint8_t paramNumber, int16_t paramValue) {
+  param_router_apply(paramApplyJump, paramNumber, paramValue);
 }
