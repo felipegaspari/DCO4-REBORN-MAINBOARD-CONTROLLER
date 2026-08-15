@@ -4,7 +4,7 @@
 #define NUM_FILTERS 4         // filter CV array size
 #endif
 
-#define ENABLE_SD             // SDMMC pin reservation; preset store still commented
+//#define ENABLE_SD             // SDMMC pin reservation; preset store still commented
 
 #define RUNNING_AVERAGE       // slim bench.h profiler; dco_control 40/41/42 + dump 45 + MCP 43/44
 // #define MB_UART_PROBE      // 1 Hz 't' labels on Serial/1/2/8; Board shows mb s2 if DCO is on USART2 PD5; desyncs Input/Screen if plugged in
@@ -89,35 +89,34 @@ void loop() {
   }
 
   if (timer1msFlag) {
-    BENCH_BEGIN(ms1_block);
-    DRIFT_LFOs();
-    BENCH_END(ms1_block);
     BENCH_BEGIN(sendSerial);
     sendSerial();
     mb_uart_probe_poll();
     BENCH_END(sendSerial);
   }
 
-  {
+  if (Serial2.available() > 0) {
     BENCH_BEGIN(serial_2);
     read_serial_2();
     BENCH_END(serial_2);
   }
+  
 
   {
     BENCH_BEGIN(lfos);
     LFO1();
     LFO2();
+    DRIFT_LFOs();
     BENCH_END(lfos);
   }
-
-  {
+ 
+ {
     BENCH_BEGIN(adsr);
     ADSR_update();
     BENCH_END(adsr);
-  }
-
-  {
+ }
+ 
+ {
     BENCH_BEGIN(cv_outs);
     if (!manualCalibrationFlag) {
       update_CV_outs();
