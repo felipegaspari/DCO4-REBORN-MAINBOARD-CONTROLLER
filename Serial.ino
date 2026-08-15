@@ -202,6 +202,46 @@ static void main_handle_filter_block(char, const uint8_t* payload, uint8_t len) 
   forward_filter_ui_to_screen(payload);
 }
 
+// Domain Block Ingress Handlers
+static void main_handle_patch_osc_block(char, const uint8_t* payload, uint8_t len) {
+  const PatchOscBlock* blk = (const PatchOscBlock*)payload;
+  OSC1Interval = blk->osc1_interval;
+  OSC2Interval = blk->osc2_interval;
+  OSC2Detune   = blk->osc2_detune;
+  voiceMode    = blk->voice_mode;
+  analogDrift  = blk->analog_drift;
+
+  relay_to_input(CMD_BLOCK_OSC, payload, len);
+  relay_to_screen(CMD_BLOCK_OSC, payload, len);
+}
+
+static void main_handle_patch_lfo_block(char, const uint8_t* payload, uint8_t len) {
+  const PatchLfoBlock* blk = (const PatchLfoBlock*)payload;
+  LFO1Waveform = blk->lfo1_waveform;
+  LFO2Waveform = blk->lfo2_waveform;
+  LFO1SpeedVal = blk->lfo1_speed;
+  LFO2SpeedVal = blk->lfo2_speed;
+  LFO1_class.setWaveForm(LFO1Waveform);
+  LFO2_class.setWaveForm(LFO2Waveform);
+  LFO1_class.setMode0Freq((float)expConverterFloat(LFO1SpeedVal, 5000), micros());
+  LFO2_class.setMode0Freq((float)expConverterFloat(LFO2SpeedVal, 5000), micros());
+
+  relay_to_input(CMD_BLOCK_LFO, payload, len);
+  relay_to_screen(CMD_BLOCK_LFO, payload, len);
+}
+
+static void main_handle_patch_mod_block(char, const uint8_t* payload, uint8_t len) {
+  const PatchModBlock* blk = (const PatchModBlock*)payload;
+  for (uint8_t i = 0; i < 8; i++) {
+    mod_matrix_set_source(i, blk->slots[i].src);
+    mod_matrix_set_dest(i, blk->slots[i].dest);
+    mod_matrix_set_depth(i, blk->slots[i].depth);
+  }
+
+  relay_to_input(CMD_BLOCK_MOD, payload, len);
+  relay_to_screen(CMD_BLOCK_MOD, payload, len);
+}
+
 static void main_handle_param16(char, const uint8_t* payload, uint8_t) {
   ParamFrame frame;
   decode_param_p(payload, frame);
@@ -254,6 +294,9 @@ static const SerialCommandDef mainSerial2Commands[] = {
   { CMD_ADSR2_BLOCK,      SERIAL_LEN_ADSR_BLOCK,           main_handle_adsr2 },
   { CMD_ADSR3_BLOCK,      SERIAL_LEN_ADSR_BLOCK,           main_handle_adsr3 },
   { CMD_FILTER_BLOCK,     SERIAL_LEN_FILTER_BLOCK,         main_handle_filter_block },
+  { CMD_BLOCK_OSC,        SERIAL_LEN_BLOCK_OSC,            main_handle_patch_osc_block }, // <-- REGISTERED!
+  { CMD_BLOCK_LFO,        SERIAL_LEN_BLOCK_LFO,            main_handle_patch_lfo_block }, // <-- REGISTERED!
+  { CMD_BLOCK_MOD,        SERIAL_LEN_BLOCK_MOD,            main_handle_patch_mod_block }, // <-- REGISTERED!
   { CMD_PRESET_DIR_ENTRY, SERIAL_LEN_PRESET_DIR_ENTRY,     main_handle_preset_dir_entry },
   { CMD_PRESET_LOADED,    SERIAL_LEN_PRESET_LOADED,        main_handle_preset_loaded },
   { CMD_SCREEN_SIGNAL,    SERIAL_LEN_SCREEN_SIGNAL,        main_handle_screen_signal },
@@ -312,43 +355,4 @@ inline void read_serial_8() {
 #ifdef ENABLE_SERIAL8
   serial_parser_drain(inputSerial8Parser, inputSerial8Lut, Serial8, SERIAL_DRAIN_BYTE_BUDGET);
 #endif
-}
-
-static void main_handle_patch_osc_block(char, const uint8_t* payload, uint8_t len) {
-  const PatchOscBlock* blk = (const PatchOscBlock*)payload;
-  OSC1Interval = blk->osc1_interval;
-  OSC2Interval = blk->osc2_interval;
-  OSC2Detune   = blk->osc2_detune;
-  voiceMode    = blk->voice_mode;
-  analogDrift  = blk->analog_drift;
-
-  relay_to_input(CMD_BLOCK_OSC, payload, len);
-  relay_to_screen(CMD_BLOCK_OSC, payload, len);
-}
-
-static void main_handle_patch_lfo_block(char, const uint8_t* payload, uint8_t len) {
-  const PatchLfoBlock* blk = (const PatchLfoBlock*)payload;
-  LFO1Waveform = blk->lfo1_waveform;
-  LFO2Waveform = blk->lfo2_waveform;
-  LFO1SpeedVal = blk->lfo1_speed;
-  LFO2SpeedVal = blk->lfo2_speed;
-  LFO1_class.setWaveForm(LFO1Waveform);
-  LFO2_class.setWaveForm(LFO2Waveform);
-  LFO1_class.setMode0Freq((float)expConverterFloat(LFO1SpeedVal, 5000), micros());
-  LFO2_class.setMode0Freq((float)expConverterFloat(LFO2SpeedVal, 5000), micros());
-
-  relay_to_input(CMD_BLOCK_LFO, payload, len);
-  relay_to_screen(CMD_BLOCK_LFO, payload, len);
-}
-
-static void main_handle_patch_mod_block(char, const uint8_t* payload, uint8_t len) {
-  const PatchModBlock* blk = (const PatchModBlock*)payload;
-  for (uint8_t i = 0; i < 8; i++) {
-    mod_matrix_set_source(i, blk->slots[i].src);
-    mod_matrix_set_dest(i, blk->slots[i].dest);
-    mod_matrix_set_depth(i, blk->slots[i].depth);
-  }
-
-  relay_to_input(CMD_BLOCK_MOD, payload, len);
-  relay_to_screen(CMD_BLOCK_MOD, payload, len);
 }

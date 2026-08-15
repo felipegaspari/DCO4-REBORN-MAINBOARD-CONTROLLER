@@ -6,7 +6,7 @@
 #define ENABLE_SERIAL8
 
 #ifndef SERIAL_INNER_MAX_PAYLOAD
-#define SERIAL_INNER_MAX_PAYLOAD 17
+#define SERIAL_INNER_MAX_PAYLOAD 36
 #endif
 
 // Shared Protocol Includes
