@@ -102,9 +102,11 @@ static void apply_local_filter_block(const uint8_t* payload) {
 }
 
 // =============================================================================
-// 3. Serial8 Handlers (From Input Controller)
+// 3. Serial8 Ingress Handlers (From Input Controller)
 // =============================================================================
 
+// Live exponential ADSR faders from panel -> apply locally and forward to DCO only.
+// (Input Controller already sends linear bar graph frames directly to Screen).
 static void input8_handle_adsr1(char, const uint8_t* payload, uint8_t len) {
   apply_local_adsr1(payload);
   relay_to_dco(CMD_ADSR1_BLOCK, payload, len);
@@ -125,14 +127,30 @@ static void input8_handle_filter_block(char, const uint8_t* payload, uint8_t len
   relay_to_dco(CMD_FILTER_BLOCK, payload, len);
 }
 
-static void input8_handle_param16(char, const uint8_t* payload, uint8_t) {
+static inline bool is_live_analog_stream(uint8_t id) {
+  return (id == (uint8_t)PARAM_PW_VALUE || 
+          id == (uint8_t)PARAM_ADSR1_TO_VCA || 
+          id == (uint8_t)PARAM_VCA_LEVEL);
+}
+
+static void input8_handle_param16(char, const uint8_t* payload, uint8_t len) {
   ParamFrame frame;
   decode_param_p(payload, frame);
+
+  // 1. Always update local Mainboard analog hardware
   update_parameters((uint8_t)frame.id, (int16_t)frame.value);
+
+  // 2. Always forward to DCO audio engine
+  relay_to_dco(CMD_PARAM_16, payload, len);
+
+  // 3. Relay to Screen ONLY if it is a discrete parameter (never spam live pots)
+  if (!is_live_analog_stream((uint8_t)frame.id)) {
+    relay_to_screen(CMD_PARAM_16, payload, len);
+  }
 }
 
 static void input8_handle_preset_name(char, const uint8_t* payload, uint8_t len) {
-  for (uint8_t i = 0; i < len; i++) presetName[i] = payload[i];
+  for (uint8_t i = 0; i < len && i < 16; i++) presetName[i] = payload[i];
   relay_to_dco(CMD_PRESET_NAME, payload, len);
 }
 
@@ -141,7 +159,7 @@ static void input8_handle_preset_dir_request(char, const uint8_t* payload, uint8
 }
 
 // =============================================================================
-// 4. Serial2 Handlers (From DCO)
+// 4. Serial2 Ingress Handlers (From DCO Engine / Preset Recall / MIDI CC)
 // =============================================================================
 
 static void main_handle_note_on(char, const uint8_t* payload, uint8_t) {
@@ -202,15 +220,30 @@ static void main_handle_filter_block(char, const uint8_t* payload, uint8_t len) 
   forward_filter_ui_to_screen(payload);
 }
 
-// Domain Block Ingress Handlers
+// Domain Block Ingress from DCO
 static void main_handle_patch_osc_block(char, const uint8_t* payload, uint8_t len) {
   const PatchOscBlock* blk = (const PatchOscBlock*)payload;
-  OSC1Interval = blk->osc1_interval;
-  OSC2Interval = blk->osc2_interval;
-  OSC2Detune   = blk->osc2_detune;
-  voiceMode    = blk->voice_mode;
-  analogDrift  = blk->analog_drift;
 
+  OSC1Interval     = blk->osc1_interval;
+  OSC2Interval     = blk->osc2_interval;
+  OSC2Detune       = blk->osc2_detune;
+  voiceMode        = blk->voice_mode;
+  analogDrift      = blk->analog_drift;
+  analogDriftSpeed = blk->analog_drift_speed;
+  analogDriftSpread= blk->analog_drift_spread;
+  portamentoTime   = blk->portamento_time;
+  portamentoMode   = blk->portamento_mode;
+
+  // Unpack analog 74HC595 wave switch states
+  osc1SawEnable   = (blk->wave_enables & (1u << 0)) != 0;
+  osc1PulseEnable = (blk->wave_enables & (1u << 1)) != 0;
+  osc1TriEnable   = (blk->wave_enables & (1u << 2)) != 0;
+  osc2SawEnable   = (blk->wave_enables & (1u << 3)) != 0;
+  osc2PulseEnable = (blk->wave_enables & (1u << 4)) != 0;
+  osc2TriEnable   = (blk->wave_enables & (1u << 5)) != 0;
+  update_waveSelector(4); // Updates analog mux / 74HC595 hardware
+
+  // Relay to Input Controller (for button LEDs) and Screen
   relay_to_input(CMD_BLOCK_OSC, payload, len);
   relay_to_screen(CMD_BLOCK_OSC, payload, len);
 }
@@ -225,6 +258,17 @@ static void main_handle_patch_lfo_block(char, const uint8_t* payload, uint8_t le
   LFO2_class.setWaveForm(LFO2Waveform);
   LFO1_class.setMode0Freq((float)expConverterFloat(LFO1SpeedVal, 5000), micros());
   LFO2_class.setMode0Freq((float)expConverterFloat(LFO2SpeedVal, 5000), micros());
+
+  // Analog modulation registers
+  PW                     = blk->pw_value;
+  LFO1toVCA              = blk->lfo1_to_vca;
+  LFO2toPW               = blk->lfo2_to_pw;
+  ADSR1toVCA             = blk->adsr1_to_vca;
+  ADSR1toPWM             = blk->adsr3_to_pwm;
+  ADSR1toDETUNE1         = blk->adsr3_to_detune1;
+  env_dco_pitch_centered = blk->adsr3_pitch_mode;
+  ADSR3ToOscSelect       = blk->adsr3_to_osc_select;
+  cv_bake_lfo1_to_vca_scale();
 
   relay_to_input(CMD_BLOCK_LFO, payload, len);
   relay_to_screen(CMD_BLOCK_LFO, payload, len);
@@ -242,25 +286,24 @@ static void main_handle_patch_mod_block(char, const uint8_t* payload, uint8_t le
   relay_to_screen(CMD_BLOCK_MOD, payload, len);
 }
 
-static void main_handle_param16(char, const uint8_t* payload, uint8_t) {
+static void main_handle_param16(char, const uint8_t* payload, uint8_t len) {
   ParamFrame frame;
   decode_param_p(payload, frame);
+
+  // 1. Update local Mainboard analog state (WITHOUT echoing back to DCO)
   update_parameters((uint8_t)frame.id, (int16_t)frame.value);
+
+  // 2. Relay to Input and Screen
   if (frame.id != PARAM_DEBUG_COMMAND) {
-    serialSendParam16ToInput(frame.id, (int16_t)frame.value);
-    serialSendParam16ToScreen(frame.id, (int16_t)frame.value);
+    relay_to_input(CMD_PARAM_16, payload, len);
+    relay_to_screen(CMD_PARAM_16, payload, len);
   }
 }
 
-static void main_handle_param32(char, const uint8_t* payload, uint8_t) {
-  ParamFrame frame;
-  decode_param_x(payload, frame);
-  if (frame.id == PARAM_GAP_FROM_DCO) {
-    serialSendParam32ToInput(PARAM_GAP_FROM_DCO, (uint32_t)frame.value);
-    serialSendParam32ToScreen(PARAM_GAP_FROM_DCO, (uint32_t)frame.value);
-  } else if (frame.id == PARAM_MANUAL_CALIBRATION_OFFSET_FROM_DCO) {
-    serialSendParam32ToInput(PARAM_MANUAL_CALIBRATION_OFFSET_FROM_DCO, (uint32_t)frame.value);
-  }
+static void main_handle_param32(char, const uint8_t* payload, uint8_t len) {
+  // Relay all 32-bit calibration, gap, and offset frames from DCO to Input and Screen
+  relay_to_input(CMD_PARAM_32, payload, len);
+  relay_to_screen(CMD_PARAM_32, payload, len);
 }
 
 static void main_handle_preset_dir_entry(char, const uint8_t* payload, uint8_t len) {
@@ -275,8 +318,19 @@ static void main_handle_screen_signal(char, const uint8_t* payload, uint8_t len)
   relay_to_screen(CMD_SCREEN_SIGNAL, payload, len);
 }
 
+// Preset Scroll Ingress (17 bytes: [slot:u8][name:16 ASCII])
 static void main_handle_preset_scroll(char, const uint8_t* payload, uint8_t len) {
+  if (len >= 17) {
+    for (uint8_t i = 0; i < 16; i++) presetName[i] = payload[1 + i];
+  } else if (len == 16) {
+    for (uint8_t i = 0; i < 16; i++) presetName[i] = payload[i];
+  }
+
+  // Relay to Screen for instant display
   relay_to_screen(CMD_PRESET_NAME, payload, len);
+
+  // Relay to Input Controller so in-RAM presetName is 100% in sync!
+  relay_to_input(CMD_PRESET_NAME, payload, len);
 }
 
 // =============================================================================
@@ -294,9 +348,9 @@ static const SerialCommandDef mainSerial2Commands[] = {
   { CMD_ADSR2_BLOCK,      SERIAL_LEN_ADSR_BLOCK,           main_handle_adsr2 },
   { CMD_ADSR3_BLOCK,      SERIAL_LEN_ADSR_BLOCK,           main_handle_adsr3 },
   { CMD_FILTER_BLOCK,     SERIAL_LEN_FILTER_BLOCK,         main_handle_filter_block },
-  { CMD_BLOCK_OSC,        SERIAL_LEN_BLOCK_OSC,            main_handle_patch_osc_block }, // <-- REGISTERED!
-  { CMD_BLOCK_LFO,        SERIAL_LEN_BLOCK_LFO,            main_handle_patch_lfo_block }, // <-- REGISTERED!
-  { CMD_BLOCK_MOD,        SERIAL_LEN_BLOCK_MOD,            main_handle_patch_mod_block }, // <-- REGISTERED!
+  { CMD_BLOCK_OSC,        SERIAL_LEN_BLOCK_OSC,            main_handle_patch_osc_block },
+  { CMD_BLOCK_LFO,        SERIAL_LEN_BLOCK_LFO,            main_handle_patch_lfo_block },
+  { CMD_BLOCK_MOD,        SERIAL_LEN_BLOCK_MOD,            main_handle_patch_mod_block },
   { CMD_PRESET_DIR_ENTRY, SERIAL_LEN_PRESET_DIR_ENTRY,     main_handle_preset_dir_entry },
   { CMD_PRESET_LOADED,    SERIAL_LEN_PRESET_LOADED,        main_handle_preset_loaded },
   { CMD_SCREEN_SIGNAL,    SERIAL_LEN_SCREEN_SIGNAL,        main_handle_screen_signal },
@@ -311,6 +365,7 @@ static const SerialCommandDef inputSerial8Commands[] = {
   { CMD_PARAM_16,           SERIAL_LEN_PARAM_16,           input8_handle_param16 },
   { CMD_PRESET_NAME,        SERIAL_LEN_PRESET_NAME,        input8_handle_preset_name },
   { CMD_PRESET_DIR_REQUEST, SERIAL_LEN_PRESET_DIR_REQUEST, input8_handle_preset_dir_request },
+  { CMD_ADSR3_BLOCK,        SERIAL_LEN_ADSR_BLOCK,         input8_handle_adsr3 },
 };
 
 void init_serial_parsers() {
