@@ -6,6 +6,7 @@
 // STM32 include path reliably (same pattern as ADSR / RoxMux on this board).
 #include "_build_libs/DCO-PROTOCOL/params_def.h"
 #include "_build_libs/DCO-PROTOCOL/param_router.h"
+#include "_shared/utils.h"
 #include "params.h"
 #include "cv_bezier.h"
 #include "cv_state.h"

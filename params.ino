@@ -52,17 +52,14 @@ static void apply_param_velocity_to_vca(int16_t v) {
 static void apply_param_osc1_level(int16_t v) {
   OSC1LevelVal = constrain(v, 0, 128);
   OSC1Level = lin_to_log_128[OSC1LevelVal];
-  mcpUpdate();
 }
 static void apply_param_osc2_level(int16_t v) {
   OSC2LevelVal = constrain(v, 0, 128);
   OSC2Level = lin_to_log_128[OSC2LevelVal];
-  mcpUpdate();
 }
 static void apply_param_sub_level(int16_t v) {
   SubLevelVal = v;
   SubLevel = (uint16_t)constrain((int)SubLevelVal * 32, 0, 4095);
-  mcpUpdate();
 }
 
 static void apply_param_voice_mode(int16_t v)        { voiceMode = (uint8_t)v; }
@@ -81,21 +78,23 @@ static void apply_param_analog_drift_spread(int16_t v) {
   init_DRIFT_LFOs();
 }
 
+// --- LFO Pitch Depths ---
 static void apply_param_lfo1_to_dco(int16_t v) {
   LFO1toDCOVal = (uint16_t)v;
-  float amt = (float)expConverterFloat(LFO1toDCOVal, 500) / 275000.0f;
-  LFO1toDCO_q24 = lfo_pitch_depth_q24(amt, LFO1_PITCH_DEPTH_SCALE);
+  LFO1toDCO_q24 = lfo_pitch_depth_q24(fast_lfo_depth_amt(LFO1toDCOVal), LFO1_PITCH_DEPTH_SCALE);
 }
 
+// --- LFO Speeds ---
 static void apply_param_lfo1_speed(int16_t v) {
   LFO1SpeedVal = (uint16_t)v;
-  LFO1Speed = expConverterFloat(LFO1SpeedVal, 5000);
-  LFO1_class.setMode0Freq((float)LFO1Speed, micros());
+  LFO1Speed = fast_exp_speed_5000(LFO1SpeedVal);
+  LFO1_class.setMode0Freq(LFO1Speed, micros());
 }
+
 static void apply_param_lfo2_speed(int16_t v) {
   LFO2SpeedVal = (uint16_t)v;
-  LFO2Speed = expConverterFloat(LFO2SpeedVal, 5000);
-  LFO2_class.setMode0Freq((float)LFO2Speed, micros());
+  LFO2Speed = fast_exp_speed_5000(LFO2SpeedVal);
+  LFO2_class.setMode0Freq(LFO2Speed, micros());
 }
 
 static void apply_param_vca_level(int16_t v) {

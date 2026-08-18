@@ -17,6 +17,11 @@ void init_ADSR() {
   adsrBezierInitTables(ADSR_1_CC, ARRAY_SIZE, _curve_tables);
 #endif
 
+// Boot: fill lin→exp table so Screen ADSR mirrors can invert wire times.
+for (int i = 0; i < LIN_TO_EXP_TABLE_SIZE; i++) {
+  linToExpLookup[i] = linearToExponential((uint16_t)i, 50.0f, maxADSRControlValue);
+}
+
   for (int i = 0; i < NUM_VOICES; i++) {
     ADSRVoices[i].adsr1_voice.setAttack(ADSR1_attack);
     ADSRVoices[i].adsr1_voice.setDecay(ADSR1_decay);
