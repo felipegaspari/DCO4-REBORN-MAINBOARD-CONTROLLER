@@ -5,10 +5,6 @@
 #define ENABLE_SERIAL2
 #define ENABLE_SERIAL8
 
-#ifndef SERIAL_INNER_MAX_PAYLOAD
-#define SERIAL_INNER_MAX_PAYLOAD 36
-#endif
-
 // Shared Protocol Includes
 #include "_build_libs/DCO-PROTOCOL/serial_param_protocol.h"
 #include "_build_libs/DCO-PROTOCOL/serial_input_protocol.h"
