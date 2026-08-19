@@ -5,6 +5,8 @@
 #define MO_LFO_USE_Q15 1
 #endif
 
+#define MO_LFO_SRAM_HOT 1
+
 #include "_build_libs/mo-lfo/mo-lfo.h"
 
 static constexpr int32_t LFO1_PITCH_DEPTH_SCALE = 1700;
