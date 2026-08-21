@@ -19,7 +19,7 @@ byte velocity[NUM_VOICES];
 byte midi_velocity[NUM_VOICES];
 #define VOICE_NOTES note
 
-uint8_t note_flags[NUM_VOICES];
+volatile uint8_t note_flags[NUM_VOICES];
 
 byte currentVoice = 0;
 
@@ -48,13 +48,15 @@ uint8_t mod_wheel_in = 0;
 uint16_t midi_pitch_bend = 8192;
 byte portamentoTime = 0;
 byte portamentoMode = 0;
-uint16_t oscSyncMode = 0;
+uint16_t oscPhaseSync = 0;
 byte voiceMode = 0;
 
 byte OSC1Interval = 24;
 byte OSC2Interval = 24;
 uint16_t OSC2Detune = 255;
 uint16_t PW = 0;
+
+uint8_t vcfTriggerMode = 0;
 
 // 16-char preset name, latest 'q' frame (space-padded ASCII). Display/echo copy
 // only — the authoritative name lives in the DCO's preset record.

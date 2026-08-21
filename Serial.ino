@@ -14,31 +14,33 @@ static SerialParserContext inputSerial8Parser;
 // =============================================================================
 
 static inline void relay_to_dco(uint8_t cmd, const uint8_t* payload, uint8_t len) {
-#ifdef ENABLE_SERIAL2
-  serial_frame_write(DcoDma, cmd, payload, len);
-#endif
-}
-
-static inline void relay_to_input(uint8_t cmd, const uint8_t* payload, uint8_t len) {
-#ifdef ENABLE_SERIAL8
-  serial_frame_write(InputDma, cmd, payload, len);
-#endif
-}
-
-static inline void relay_to_screen(uint8_t cmd, const uint8_t* payload, uint8_t len) {
-#ifdef ENABLE_SERIAL1
-  serial_frame_write(ScreenDma, cmd, payload, len);
-#endif
-}
+  #ifdef ENABLE_SERIAL2
+    serial_frame_write(DcoDma, cmd, payload, len);
+  #endif
+  }
+  
+  static inline void relay_to_input(uint8_t cmd, const uint8_t* payload, uint8_t len) {
+  #ifdef ENABLE_SERIAL8
+    serial_frame_write(InputDma, cmd, payload, len);
+  #endif
+  }
+  
+  static inline void relay_to_screen(uint8_t cmd, const uint8_t* payload, uint8_t len) {
+  #ifdef ENABLE_SERIAL1
+    serial_frame_write(ScreenDma, cmd, payload, len);
+  #endif
+  }
 
 static void forward_adsr_to_screen(uint8_t cmd, const uint8_t* payload) {
 #ifdef ENABLE_SERIAL1
-  uint8_t screen_payload[SERIAL_LEN_ADSR_BLOCK];
-  encode_u16_le(screen_payload + 0, exp_to_lin_index(decode_u16_le(payload + 0)));
-  encode_u16_le(screen_payload + 2, exp_to_lin_index(decode_u16_le(payload + 2)));
-  encode_u16_le(screen_payload + 4, decode_u16_le(payload + 4));  // Sustain is linear
-  encode_u16_le(screen_payload + 6, exp_to_lin_index(decode_u16_le(payload + 6)));
-  relay_to_screen(cmd, screen_payload, SERIAL_LEN_ADSR_BLOCK);
+  const AdsrBlock* in = (const AdsrBlock*)payload;
+  AdsrBlock screen_payload = {
+    exp_to_lin_index(in->attack),
+    exp_to_lin_index(in->decay),
+    in->sustain,
+    exp_to_lin_index(in->release)
+  };
+  relay_to_screen(cmd, (const uint8_t*)&screen_payload, sizeof(AdsrBlock));
 #endif
 }
 
@@ -51,49 +53,50 @@ void serial_send_bench_text_chunk(const uint8_t* data, uint8_t n) {
   }
   serial_frame_write(DcoDma, CMD_BENCH_TEXT, payload, SERIAL_LEN_BENCH_TEXT);
 }
-
-void sendSerial() {}
-
-// =============================================================================
-// 2. Local Hardware Apply Helpers
-// =============================================================================
-
-static void apply_local_adsr1(const uint8_t* payload) {
-  uint16_t dirty = 0, v;
-  v = decode_u16_le(payload + 0); if (v != ADSR_VCA_attack)  { ADSR_VCA_attack = v; dirty |= ADSR_DIRTY_VCA_A; }
-  v = decode_u16_le(payload + 2); if (v != ADSR_VCA_decay)   { ADSR_VCA_decay = v; dirty |= ADSR_DIRTY_VCA_D; }
-  v = decode_u16_le(payload + 4); if (v != ADSR_VCA_sustain) { ADSR_VCA_sustain = v; dirty |= ADSR_DIRTY_VCA_S; }
-  v = decode_u16_le(payload + 6); if (v != ADSR_VCA_release) { ADSR_VCA_release = v; dirty |= ADSR_DIRTY_VCA_R; }
-  if (dirty) mark_adsr_params_dirty(dirty);
-}
-
-static void apply_local_adsr2(const uint8_t* payload) {
-  uint16_t dirty = 0, v;
-  v = decode_u16_le(payload + 0); if (v != ADSR_VCF_attack)  { ADSR_VCF_attack = v; dirty |= ADSR_DIRTY_VCF_A; }
-  v = decode_u16_le(payload + 2); if (v != ADSR_VCF_decay)   { ADSR_VCF_decay = v; dirty |= ADSR_DIRTY_VCF_D; }
-  v = decode_u16_le(payload + 4); if (v != ADSR_VCF_sustain) { ADSR_VCF_sustain = v; dirty |= ADSR_DIRTY_VCF_S; }
-  v = decode_u16_le(payload + 6); if (v != ADSR_VCF_release) { ADSR_VCF_release = v; dirty |= ADSR_DIRTY_VCF_R; }
-  if (dirty) mark_adsr_params_dirty(dirty);
-}
-
-static void apply_local_adsr3(const uint8_t* payload) {
-  uint16_t dirty = 0, v;
-  v = decode_u16_le(payload + 0); if (v != ADSR1_attack)  { ADSR1_attack = v; dirty |= ADSR_DIRTY_DCO_A; }
-  v = decode_u16_le(payload + 2); if (v != ADSR1_decay)   { ADSR1_decay = v; dirty |= ADSR_DIRTY_DCO_D; }
-  v = decode_u16_le(payload + 4); if (v != ADSR1_sustain) { ADSR1_sustain = v; dirty |= ADSR_DIRTY_DCO_S; }
-  v = decode_u16_le(payload + 6); if (v != ADSR1_release) { ADSR1_release = v; dirty |= ADSR_DIRTY_DCO_R; }
-  if (dirty) mark_adsr_params_dirty(dirty);
-}
-
-static void apply_local_filter_block(const uint8_t* payload) {
-  CUTOFF     = decode_u16_le(payload + 0);
-  RESONANCE  = decode_u16_le(payload + 2);
-  ADSR2toVCF = decode_i16_le(payload + 4);
-  LFO2toVCF  = decode_u16_le(payload + 6);
-  cv_bake_adsr2_to_vcf_scale();
-  cv_bake_lfo2_to_vcf_scale();
-}
-
+  
+  // =============================================================================
+  // 2. Local Hardware Apply Helpers
+  // =============================================================================
+  
+  static void apply_local_adsr1(const uint8_t* payload) {
+    const AdsrBlock* blk = (const AdsrBlock*)payload;
+    uint16_t dirty = 0;
+    if (blk->attack  != ADSR_VCA_attack)  { ADSR_VCA_attack  = blk->attack;  dirty |= ADSR_DIRTY_VCA_A; }
+    if (blk->decay   != ADSR_VCA_decay)   { ADSR_VCA_decay   = blk->decay;   dirty |= ADSR_DIRTY_VCA_D; }
+    if (blk->sustain != ADSR_VCA_sustain) { ADSR_VCA_sustain = blk->sustain; dirty |= ADSR_DIRTY_VCA_S; }
+    if (blk->release != ADSR_VCA_release) { ADSR_VCA_release = blk->release; dirty |= ADSR_DIRTY_VCA_R; }
+    if (dirty) mark_adsr_params_dirty(dirty);
+  }
+  
+  static void apply_local_adsr2(const uint8_t* payload) {
+    const AdsrBlock* blk = (const AdsrBlock*)payload;
+    uint16_t dirty = 0;
+    if (blk->attack  != ADSR_VCF_attack)  { ADSR_VCF_attack  = blk->attack;  dirty |= ADSR_DIRTY_VCF_A; }
+    if (blk->decay   != ADSR_VCF_decay)   { ADSR_VCF_decay   = blk->decay;   dirty |= ADSR_DIRTY_VCF_D; }
+    if (blk->sustain != ADSR_VCF_sustain) { ADSR_VCF_sustain = blk->sustain; dirty |= ADSR_DIRTY_VCF_S; }
+    if (blk->release != ADSR_VCF_release) { ADSR_VCF_release = blk->release; dirty |= ADSR_DIRTY_VCF_R; }
+    if (dirty) mark_adsr_params_dirty(dirty);
+  }
+  
+  static void apply_local_adsr3(const uint8_t* payload) {
+    const AdsrBlock* blk = (const AdsrBlock*)payload;
+    uint16_t dirty = 0;
+    if (blk->attack  != ADSR1_attack)  { ADSR1_attack  = blk->attack;  dirty |= ADSR_DIRTY_DCO_A; }
+    if (blk->decay   != ADSR1_decay)   { ADSR1_decay   = blk->decay;   dirty |= ADSR_DIRTY_DCO_D; }
+    if (blk->sustain != ADSR1_sustain) { ADSR1_sustain = blk->sustain; dirty |= ADSR_DIRTY_DCO_S; }
+    if (blk->release != ADSR1_release) { ADSR1_release = blk->release; dirty |= ADSR_DIRTY_DCO_R; }
+    if (dirty) mark_adsr_params_dirty(dirty);
+  }
+  
+  static void apply_local_filter_block(const uint8_t* payload) {
+    const FilterBlock* blk = (const FilterBlock*)payload;
+    CUTOFF     = blk->cutoff;
+    RESONANCE  = blk->resonance;
+    ADSR2toVCF = blk->env2_to_vcf;
+    LFO2toVCF  = blk->lfo2_to_vcf;
+    cv_bake_adsr2_to_vcf_scale();
+    cv_bake_lfo2_to_vcf_scale();
+  }
 // =============================================================================
 // 3. Serial8 Ingress Handlers (From Input Controller)
 // =============================================================================
@@ -243,7 +246,7 @@ static void main_handle_patch_osc_block(char, const uint8_t* payload, uint8_t le
   apply_param_unison_detune(blk->unison_detune);
   apply_param_voice_mode(blk->voice_mode);
   // apply_param_voice_alloc_mode(blk->voice_alloc_mode); // DCO-only voice allocation policy
-  apply_param_osc_sync_mode(blk->sync_mode);
+  // apply_param_phase_align(blk->phase_align); // TODO: Uncomment this when phase align is implemented
   // apply_param_soft_sync(blk->soft_sync); // DCO-only PIO sync
   // apply_param_subosc_divide(blk->subosc_divide); // DCO-only PIO suboscillator
 
@@ -305,7 +308,6 @@ static void main_handle_patch_mod_block(char, const uint8_t* payload, uint8_t le
   }
 }
 
-// 4. Mixer, Curves, VCA & Filter Modes Block ('Q')
 static void main_handle_patch_mix_block(char, const uint8_t* payload, uint8_t len) {
   const PatchMixBlock* blk = (const PatchMixBlock*)payload;
 
@@ -315,7 +317,6 @@ static void main_handle_patch_mix_block(char, const uint8_t* payload, uint8_t le
   // --- Mixer Levels ---
   apply_param_osc1_level(blk->osc1_level);
   apply_param_osc2_level(blk->osc2_level);
-  // apply_param_osc3_level(blk->osc3_level); // DCO3 monosynth only (apply_noop on DCO4 MB)
   apply_param_sub_level(blk->sub_level);
   apply_param_vca_level(blk->vca_level);
   apply_param_filter_mode(blk->filter_mode);
@@ -328,17 +329,23 @@ static void main_handle_patch_mix_block(char, const uint8_t* payload, uint8_t le
   apply_param_dist_drive(blk->dist_drive);
   apply_param_dist_mix(blk->dist_mix);
 
-  // --- Envelope Curve Shaping ---
+  // --- Envelope Curve Shaping (Apply All Curves) ---
   apply_param_adsr1_attack_curve(blk->adsr1_attack_curve);
   apply_param_adsr1_decay_curve(blk->adsr1_decay_curve);
+  apply_param_adsr1_release_curve(blk->adsr1_release_curve); 
   apply_param_adsr2_attack_curve(blk->adsr2_attack_curve);
   apply_param_adsr2_decay_curve(blk->adsr2_decay_curve);
+  apply_param_adsr2_release_curve(blk->adsr2_release_curve); 
+  apply_param_adsr3_attack_curve(blk->adsr3_attack_curve);   
+  apply_param_adsr3_decay_curve(blk->adsr3_decay_curve);     
+  apply_param_adsr3_release_curve(blk->adsr3_release_curve); 
+
+  apply_param_vcf_trigger_mode(blk->vcf_trigger_mode);       
 
   // --- Boolean Switches & Restarts ---
   apply_param_resonance_comp((blk->misc_flags & (1 << 0)) != 0);
   apply_param_vca_adsr_restart((blk->misc_flags & (1 << 1)) != 0);
   apply_param_vcf_adsr_restart((blk->misc_flags & (1 << 2)) != 0);
-  // apply_param_adsr3_enabled((blk->misc_flags & (1 << 3)) != 0); // Panel/UI flag
 }
 
 static void main_handle_param16(char, const uint8_t* payload, uint8_t len) {
@@ -508,7 +515,7 @@ inline void read_serial_8() {
 //   Serial.printf(" OSC2: Saw=%d Pulse=%d Tri=%d | Interval=%u Detune=%u\n",
 //                 (int)osc2SawEnable, (int)osc2PulseEnable, (int)osc2TriEnable, (unsigned)OSC2Interval, (unsigned)OSC2Detune);
 //   Serial.printf(" Voice: Mode=%u UnisonDetune=%d SyncMode=%u\n",
-//                 (unsigned)voiceMode, unisonDetune, (unsigned)oscSyncMode);
+//                 (unsigned)voiceMode, unisonDetune, (unsigned)oscPhaseSync);
 //   Serial.printf(" Portamento: Time=%u Mode=%u | PW=%u\n",
 //                 (unsigned)portamentoTime, (unsigned)portamentoMode, (unsigned)PW);
 //   Serial.printf(" Drift: Amount=%d Speed=%d Spread=%d\n",

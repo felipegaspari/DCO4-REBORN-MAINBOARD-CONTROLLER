@@ -301,7 +301,7 @@ Central param router (`int16_t` values) and the 256-entry apply jump table.
 | `apply_param_osc3_detune` | Forward-only to DCO |
 | `apply_param_lfo2_to_osc2` / `_osc3` / `_osc2_coarse` / `_osc3_coarse` | Forward-only to DCO |
 | `apply_param_character` | Forward-only to DCO |
-| `apply_param_osc_sync_mode` | Local + forward DCO |
+| `apply_PARAM_PHASE_ALIGN` | Local + forward DCO |
 | `apply_param_portamento_time` / `apply_param_portamento_mode` | Local + forward DCO |
 | `apply_param_vcf_keytrack` | `VCFKeytrack` + `VCFKeytrackModifier_q15` bake |
 | `apply_param_velocity_to_vcf` | Velocity→VCF Q15 scale |

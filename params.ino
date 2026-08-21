@@ -30,7 +30,7 @@ static void apply_param_lfo2_waveform(int16_t v) {
 static void apply_param_osc1_interval(int16_t v)     { OSC1Interval = (uint8_t)v; }
 static void apply_param_osc2_interval(int16_t v)     { OSC2Interval = (uint8_t)v; }
 static void apply_param_osc2_detune(int16_t v)       { OSC2Detune = (uint16_t)v; }
-static void apply_param_osc_sync_mode(int16_t v)     { oscSyncMode = (uint8_t)v; }
+static void apply_param_phase_align(int16_t v)       { oscPhaseSync = (uint16_t)v; }
 static void apply_param_portamento_time(int16_t v)   { portamentoTime = (uint8_t)v; }
 static void apply_param_portamento_mode(int16_t v)   { portamentoMode = (uint8_t)v; }
 
@@ -113,6 +113,9 @@ static void apply_param_adsr3_to_pwm(int16_t v)       { ADSR1toPWM = (int16_t)v 
 static void apply_param_adsr3_to_detune1(int16_t v)   { ADSR1toDETUNE1 = v; }
 static void apply_param_adsr3_pitch_mode(int16_t v)   { env_dco_pitch_centered = (v != 0) ? 1 : 0; }
 
+
+/// ADSR CURVES
+// --- VCA Envelope Curves (ADSR1) ---
 static void apply_param_adsr1_attack_curve(int16_t v) {
   ADSR1AttackCurveVal = (uint8_t)v;
   ADSR_VCA_change_attack_curve(ADSR1AttackCurveVal);
@@ -121,6 +124,12 @@ static void apply_param_adsr1_decay_curve(int16_t v) {
   ADSR1DecayCurveVal = (uint8_t)v;
   ADSR_VCA_change_decay_curve(ADSR1DecayCurveVal);
 }
+static void apply_param_adsr1_release_curve(int16_t v) {
+  ADSR1ReleaseCurveVal = (uint8_t)v;
+  ADSR_VCA_change_release_curve(ADSR1ReleaseCurveVal);
+}
+
+// --- VCF Envelope Curves (ADSR2) ---
 static void apply_param_adsr2_attack_curve(int16_t v) {
   ADSR2AttackCurveVal = (uint8_t)v;
   ADSR_VCF_change_attack_curve(ADSR2AttackCurveVal);
@@ -129,6 +138,27 @@ static void apply_param_adsr2_decay_curve(int16_t v) {
   ADSR2DecayCurveVal = (uint8_t)v;
   ADSR_VCF_change_decay_curve(ADSR2DecayCurveVal);
 }
+static void apply_param_adsr2_release_curve(int16_t v) {
+  ADSR2ReleaseCurveVal = (uint8_t)v;
+  ADSR_VCF_change_release_curve(ADSR2ReleaseCurveVal);
+}
+
+// --- DCO/Aux Envelope Curves (ADSR3)  ---
+static void apply_param_adsr3_attack_curve(int16_t v) {
+  ADSR3AttackCurveVal = (uint8_t)v;
+ // ADSR3_change_attack_curve(ADSR3AttackCurveVal);
+}
+static void apply_param_adsr3_decay_curve(int16_t v) {
+  ADSR3DecayCurveVal = (uint8_t)v;
+ // ADSR3_change_decay_curve(ADSR3DecayCurveVal);
+}
+static void apply_param_adsr3_release_curve(int16_t v) {
+  ADSR3ReleaseCurveVal = (uint8_t)v;
+ // ADSR3_change_release_curve(ADSR3ReleaseCurveVal);
+}
+
+// --- VCF Trigger Mode (DCO-owned via note_flags) ---
+static void apply_param_vcf_trigger_mode(int16_t v) { vcfTriggerMode = (uint8_t)v; }  
 
 static void apply_param_pw_value(int16_t v)          { PW = (uint16_t)v; }
 static void apply_param_adsr1_to_vca(int16_t v)      { ADSR1toVCA = v; }
@@ -211,7 +241,7 @@ static const ParamDescriptorT<int16_t> paramTable[] = {
   { PARAM_LFO2_TO_OSC2_COARSE, apply_noop },
   { PARAM_LFO2_TO_OSC3_COARSE, apply_noop },
   { PARAM_CHARACTER, apply_noop },
-  { PARAM_OSC_SYNC_MODE, apply_param_osc_sync_mode },
+  { PARAM_OSC_PHASE_SYNC, apply_param_phase_align },
   { PARAM_PORTAMENTO_TIME, apply_param_portamento_time },
   { PARAM_PORTAMENTO_MODE, apply_param_portamento_mode },
   { PARAM_VCF_KEYTRACK, apply_param_vcf_keytrack },
@@ -247,6 +277,12 @@ static const ParamDescriptorT<int16_t> paramTable[] = {
   { PARAM_ADSR1_DECAY_CURVE, apply_param_adsr1_decay_curve },
   { PARAM_ADSR2_ATTACK_CURVE, apply_param_adsr2_attack_curve },
   { PARAM_ADSR2_DECAY_CURVE, apply_param_adsr2_decay_curve },
+  { PARAM_ADSR1_RELEASE_CURVE, apply_param_adsr1_release_curve },
+  { PARAM_ADSR2_RELEASE_CURVE, apply_param_adsr2_release_curve },
+  { PARAM_ADSR3_ATTACK_CURVE,  apply_param_adsr3_attack_curve },
+  { PARAM_ADSR3_DECAY_CURVE,   apply_param_adsr3_decay_curve },
+  { PARAM_ADSR3_RELEASE_CURVE, apply_param_adsr3_release_curve },
+  { PARAM_VCF_TRIGGER_MODE,    apply_param_vcf_trigger_mode },
   { PARAM_DIST_DRIVE, apply_param_dist_drive },
   { PARAM_DIST_MIX, apply_param_dist_mix },
   { PARAM_FILTER_MODE, apply_param_filter_mode },
